@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Proxmox VDI Session
+Comment=Connect to a Proxmox VE virtual desktop
+Exec=/usr/local/bin/proxmox-session.sh
+TryExec=/usr/local/bin/proxmox-session.sh
+Type=Application
+DesktopNames=ProxmoxVDI

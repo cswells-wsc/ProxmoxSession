@@ -1,0 +1,79 @@
+[General]
+# Title displayed to the user
+title = VDI Login
+# PyQt6 theme: dark, light, or system (default: system)
+theme = system
+# Program icon (path to .png or .ico)
+icon = vdiicon.ico
+# Logo displayed on all windows
+logo = vdiclient.png
+# Kiosk mode — no window decorations or close button
+kiosk = False
+# Fullscreen mode (overridden by kiosk)
+fullscreen = True
+# Disable remote-viewer kiosk mode even when kiosk = True
+#viewer_kiosk = False
+# Display SPICE ini contents before connecting (debug)
+inidebug = False
+# Which guest types to show: both, lxc, qemu
+guest_type = both
+# Show Reset button per VM
+#show_reset = True
+# Override window dimensions if auto-sizing fails
+#window_width = 900
+#window_height = 600
+
+
+# Each cluster is a [Hosts.<name>] section.
+# The name is shown to users in the cluster dropdown.
+[Hosts.PVE]
+# JSON dict of host:port pairs — ALL lines must be indented
+hostpool = {
+               "10.10.10.100" : 8006,
+               "pve1.example.com" : 8006
+           }
+# Auth backend: pve or pam
+auth_backend = pve
+# Enable TOTP entry field
+auth_totp = false
+# Verify TLS certificate
+tls_verify = false
+
+# API token auth (if set with token_name + token_value, login is automatic)
+#user = user@pve
+#token_name = vdi
+#token_value = xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+# Launch a password reset command/URL
+#pwresetcmd = xdg-open https://pwreset.example.com
+
+# Auto-connect to a specific VMID after login
+#auto_vmid = 100
+
+# Port-knock sequence before connecting (JSON array of {host, port, proto})
+#knock_seq = [{"host": "10.10.10.100", "port": 1234, "proto": "udp"}]
+
+
+# Additional cluster example
+#[Hosts.PVE2]
+#hostpool = {
+#               "10.10.20.100" : 8006
+#           }
+#auth_backend = pve
+#auth_totp = false
+#tls_verify = false
+
+
+[SpiceProxyRedirect]
+# Rewrite SPICE proxy host:port returned by Proxmox API
+# Format: original_host:port = reachable_host:port
+# Use inidebug = True to find the proxy value Proxmox is returning
+#pve1.example.com:3128 = 203.0.113.10:3128
+
+
+#[AdditionalParameters]
+# Extra parameters passed directly to remote-viewer
+# See: https://www.mankier.com/1/remote-viewer
+#enable-usbredir = true
+#enable-usb-autoshare = true
+#spice-color-depth = 32

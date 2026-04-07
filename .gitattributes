@@ -1,0 +1,16 @@
+# Default: normalize line endings on checkout
+* text=auto
+
+# Shell scripts and Linux files must keep LF
+*.sh        text eol=lf
+*.desktop   text eol=lf
+
+# Windows batch files keep CRLF
+*.bat       text eol=crlf
+
+# Python and other text files: normalize
+*.py        text eol=lf
+*.toml      text eol=lf
+*.txt       text eol=lf
+*.md        text eol=lf
+*.ini       text eol=lf

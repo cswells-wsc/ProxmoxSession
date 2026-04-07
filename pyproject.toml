@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "proxmox-session"
+version = "0.1.0"
+description = "Modern Proxmox VDI client installable as a Linux desktop session type"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "proxmoxer[https]>=2.0.1",
+    "requests>=2.28.0",
+    "PyQt6>=6.4.0",
+]
+
+[project.scripts]
+proxmox-session = "proxmox_session.main:main"
+proxmox-session-config = "proxmox_session.ui.config_window:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["proxmox_session*"]
