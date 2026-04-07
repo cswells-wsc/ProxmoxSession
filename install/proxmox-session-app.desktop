@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=ProxmoxSession
+GenericName=VDI Client
+Comment=Connect to a Proxmox VE virtual desktop
+Exec=python3 -m proxmox_session
+Icon=network-workgroup
+Terminal=false
+Type=Application
+Categories=Network;RemoteAccess;
+Keywords=proxmox;vdi;spice;remote;desktop;vm;

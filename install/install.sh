@@ -52,6 +52,15 @@ echo "==> Installing X session entry..."
 mkdir -p /usr/share/xsessions
 install -m 644 "$SCRIPT_DIR/proxmox-session.desktop" /usr/share/xsessions/proxmox-session.desktop
 
+# ── Application menu shortcuts ─────────────────────────────────────────────────
+
+echo "==> Installing application menu shortcuts..."
+mkdir -p /usr/share/applications
+install -m 644 "$SCRIPT_DIR/proxmox-session-app.desktop" /usr/share/applications/proxmox-session-app.desktop
+install -m 644 "$SCRIPT_DIR/proxmox-session-config.desktop" /usr/share/applications/proxmox-session-config.desktop
+# Refresh the application menu cache if available
+command -v update-desktop-database &>/dev/null && update-desktop-database /usr/share/applications/ || true
+
 # ── Default config ─────────────────────────────────────────────────────────────
 
 echo "==> Creating default config directory..."
@@ -85,6 +94,12 @@ if [ -n "$VIEWER" ]; then
     echo "    remote-viewer: $VIEWER"
 else
     echo "    WARNING: remote-viewer not found — install virt-viewer manually."
+fi
+
+if [ -f /usr/share/applications/proxmox-session-app.desktop ]; then
+    echo "    App menu shortcut: OK"
+else
+    echo "    WARNING: app menu shortcut not found."
 fi
 
 echo ""

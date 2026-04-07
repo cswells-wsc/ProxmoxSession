@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=ProxmoxSession Config
+GenericName=VDI Client Configuration
+Comment=Edit ProxmoxSession connection settings
+Exec=python3 -m proxmox_session.config_editor
+Icon=preferences-system-network
+Terminal=false
+Type=Application
+Categories=Network;RemoteAccess;Settings;
+Keywords=proxmox;vdi;config;settings;
