@@ -225,7 +225,8 @@ class VMListWindow(QMainWindow):
             show_error(self, str(e))
             return
 
-        log.debug("SPICE config received from Proxmox for VM %s: %s", vm.vmid, spice_data)
+        safe_data = {k: ("***" if k == "password" else v) for k, v in spice_data.items()}
+        log.debug("SPICE config received from Proxmox for VM %s: %s", vm.vmid, safe_data)
 
         ini = build_spice_ini(
             spice_data,
@@ -233,7 +234,9 @@ class VMListWindow(QMainWindow):
             self.config.addl_params,
         )
 
-        log.debug("Built .vv file contents:\n%s", ini)
+        import re
+        safe_ini = re.sub(r"(?im)^(password\s*=\s*).*$", r"\1***", ini)
+        log.debug("Built .vv file contents:\n%s", safe_ini)
 
         if self.config.inidebug:
             import os

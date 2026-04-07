@@ -689,6 +689,12 @@ class ConfigWindow(QMainWindow):
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(content)
+            # Restrict config to owner-only on Linux — file contains API tokens
+            if sys.platform != "win32":
+                try:
+                    os.chmod(path, 0o600)
+                except OSError:
+                    pass
             return True
         except PermissionError:
             if sys.platform != "win32":

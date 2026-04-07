@@ -48,6 +48,12 @@ def _setup_logging(debug: bool) -> None:
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, "proxmox_session.log")
     file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    # Restrict log file to owner-only on Linux — may contain SPICE tickets in debug mode
+    if sys.platform != "win32":
+        try:
+            os.chmod(log_path, 0o600)
+        except OSError:
+            pass
     handlers.append(file_handler)
 
     logging.basicConfig(

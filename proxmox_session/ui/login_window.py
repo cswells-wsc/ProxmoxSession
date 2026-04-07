@@ -164,9 +164,12 @@ class LoginWindow(QDialog):
             )
 
     def _on_pw_reset(self):
+        import shlex
         host = self.config.hosts[self.current_hostset]
         if host.pwresetcmd:
             try:
-                subprocess.check_call(host.pwresetcmd, shell=True)
+                subprocess.check_call(shlex.split(host.pwresetcmd))
+            except FileNotFoundError as e:
+                show_error(self, f"Password reset command not found:\n{e}")
             except Exception as e:
                 show_error(self, f"Unable to open password reset:\n{e}")

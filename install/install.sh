@@ -67,7 +67,7 @@ command -v update-desktop-database &>/dev/null && update-desktop-database /usr/s
 echo "==> Creating default config directory..."
 mkdir -p /etc/vdiclient
 if [ ! -f /etc/vdiclient/vdiclient.ini ]; then
-    install -m 644 "$REPO_DIR/vdiclient.ini.example" /etc/vdiclient/vdiclient.ini
+    install -m 600 "$REPO_DIR/vdiclient.ini.example" /etc/vdiclient/vdiclient.ini
     echo "    Default config written to /etc/vdiclient/vdiclient.ini"
     echo "    Edit this file with your Proxmox server details before logging in!"
 else

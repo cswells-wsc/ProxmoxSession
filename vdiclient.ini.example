@@ -36,8 +36,8 @@ hostpool = {
 auth_backend = pve
 # Enable TOTP entry field
 auth_totp = false
-# Verify TLS certificate
-tls_verify = false
+# Verify TLS certificate. Set to false only if using a self-signed Proxmox certificate.
+tls_verify = true
 
 # API token auth (if set with token_name + token_value, login is automatic)
 #user = user@pve
