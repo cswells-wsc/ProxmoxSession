@@ -30,7 +30,7 @@ Based on [PVE-VDIClient](https://github.com/joshpatten/PVE-VDIClient), rewritten
 **Requirements:** Python 3.10+, internet access (winget installs virt-viewer)
 
 ```
-git clone https://github.com/your-org/ProxmoxSession.git
+git clone https://github.com/cswells-wsc/ProxmoxSession.git
 cd ProxmoxSession
 install\install.bat
 ```
@@ -55,7 +55,7 @@ install\install.bat --check
 **Requirements:** Python 3.10+, `python3-pyqt6`, `virt-viewer`, `openbox`
 
 ```bash
-git clone https://github.com/your-org/ProxmoxSession.git
+git clone https://github.com/cswells-wsc/ProxmoxSession.git
 cd ProxmoxSession
 sudo ./install/install.sh
 ```
