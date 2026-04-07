@@ -1,8 +1,8 @@
 [Desktop Entry]
 Name=ProxmoxSession Config
 GenericName=VDI Client Configuration
-Comment=Edit ProxmoxSession connection settings
-Exec=python3 -m proxmox_session.config_editor
+Comment=Edit ProxmoxSession connection settings (requires administrator password)
+Exec=/usr/local/bin/proxmox-session-config-admin.sh
 Icon=preferences-system-network
 Terminal=false
 Type=Application

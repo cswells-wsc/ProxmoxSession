@@ -678,11 +678,42 @@ class ConfigWindow(QMainWindow):
         return out
 
     def _write_config(self, path: str, cfg: ConfigParser) -> bool:
+        import subprocess
+        from io import StringIO
+
+        buf = StringIO()
+        cfg.write(buf)
+        content = buf.getvalue()
+
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w", encoding="utf-8") as fh:
-                cfg.write(fh)
+                fh.write(content)
             return True
+        except PermissionError:
+            if sys.platform != "win32":
+                # Try writing via pkexec (prompts user for sudo password via GUI)
+                try:
+                    result = subprocess.run(
+                        ["pkexec", "tee", path],
+                        input=content.encode("utf-8"),
+                        capture_output=True,
+                    )
+                    if result.returncode == 0:
+                        return True
+                    QMessageBox.critical(
+                        self, "Save Failed",
+                        f"Could not write config (pkexec returned {result.returncode}):\n"
+                        f"{result.stderr.decode(errors='replace')}",
+                    )
+                    return False
+                except FileNotFoundError:
+                    pass  # pkexec not available
+            QMessageBox.critical(
+                self, "Save Failed",
+                f"Permission denied: {path}\n\nRun the config editor as administrator.",
+            )
+            return False
         except OSError as e:
             QMessageBox.critical(self, "Save Failed", f"Could not write config:\n{e}")
             return False

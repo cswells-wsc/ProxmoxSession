@@ -45,6 +45,7 @@ fi
 
 echo "==> Installing session launcher..."
 install -m 755 "$SCRIPT_DIR/proxmox-session.sh" /usr/local/bin/proxmox-session.sh
+install -m 755 "$SCRIPT_DIR/proxmox-session-config-admin.sh" /usr/local/bin/proxmox-session-config-admin.sh
 
 # ── X session entry ────────────────────────────────────────────────────────────
 
