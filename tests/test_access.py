@@ -54,6 +54,23 @@ def _make_proxmox():
 
 # ── is_protected ──────────────────────────────────────────────────────────────
 
+class TestRoleDefinitions(unittest.TestCase):
+    def test_superadmin_has_user_audit(self):
+        """User.Audit is required to list all users (without it Proxmox returns only current user)."""
+        self.assertIn("User.Audit", ROLES["ProxmoxSession.SuperAdmin"])
+
+    def test_superadmin_has_group_audit(self):
+        """Group.Audit is required to read group member lists."""
+        self.assertIn("Group.Audit", ROLES["ProxmoxSession.SuperAdmin"])
+
+    def test_superadmin_has_pool_audit(self):
+        """Pool.Audit is required to read pool members in VM Assignments tab."""
+        self.assertIn("Pool.Audit", ROLES["ProxmoxSession.SuperAdmin"])
+
+    def test_superadmin_has_vm_audit(self):
+        self.assertIn("VM.Audit", ROLES["ProxmoxSession.SuperAdmin"])
+
+
 class TestIsProtected(unittest.TestCase):
     def test_root_is_protected(self):
         self.assertTrue(is_protected("root@pam"))
@@ -91,20 +108,29 @@ class TestCreateRoles(unittest.TestCase):
         self.assertEqual(set(created), set(ROLES.keys()))
         self.assertEqual(px.access.roles.post.call_count, len(ROLES))
 
-    def test_skips_existing_roles(self):
+    def test_updates_existing_roles_in_place(self):
+        """Re-running the wizard updates role privileges instead of skipping."""
         px = _make_proxmox()
         existing_roleid = list(ROLES.keys())[0]
         px.access.roles.get.return_value = [{"roleid": existing_roleid}]
         created = create_proxmoxsession_roles(px)
+        # The existing role should NOT appear in created
         self.assertNotIn(existing_roleid, created)
+        # But it should have been updated via PUT
+        px.access.roles(existing_roleid).put.assert_called_once()
+        # The remaining roles were created via POST
         self.assertEqual(px.access.roles.post.call_count, len(ROLES) - 1)
 
-    def test_skips_all_when_all_exist(self):
+    def test_updates_all_when_all_exist(self):
+        """All existing roles are updated — none are silently skipped."""
         px = _make_proxmox()
         px.access.roles.get.return_value = [{"roleid": r} for r in ROLES]
         created = create_proxmoxsession_roles(px)
         self.assertEqual(created, [])
         px.access.roles.post.assert_not_called()
+        # Each existing role should have been updated
+        for roleid in ROLES:
+            px.access.roles(roleid).put.assert_called()
 
 
 # ── create_proxmoxsession_group ───────────────────────────────────────────────
@@ -161,12 +187,17 @@ class TestAssignGroupPermissions(unittest.TestCase):
         self.assertIn(f"/pool/{POOL_NAME}", first.kwargs["path"])
         self.assertEqual(first.kwargs["roles"], "ProxmoxSession.VDIDeploy")
 
-    def test_superadmin_gets_access_path_for_user_creation(self):
-        """Superadmin needs /access ACL so User.Modify allows creating new users."""
+    def test_superadmin_gets_access_path_with_propagate(self):
+        """Superadmin /access ACL must propagate so /access/users and /access/groups are covered."""
         px = _make_proxmox()
         assign_group_permissions(px, "superadmin", "/vms")
-        paths = [c.kwargs["path"] for c in px.access.acl.put.call_args_list]
-        self.assertIn("/access", paths, "Expected /access ACL for superadmin (user creation)")
+        access_calls = [
+            c for c in px.access.acl.put.call_args_list
+            if c.kwargs.get("path") == "/access"
+        ]
+        self.assertTrue(access_calls, "Expected /access ACL for superadmin")
+        self.assertEqual(access_calls[0].kwargs.get("propagate"), 1,
+                         "/access ACL must have propagate=1 to cover /access/users and /access/groups")
 
     def test_superadmin_management_acl_always_granted(self):
         """Every group gets a superadmin management ACL on /access/groups/<gid>."""

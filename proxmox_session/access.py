@@ -24,8 +24,14 @@ ROLES: dict[str, str] = {
     "ProxmoxSession.VDIUser":   "VM.Console VM.PowerMgmt VM.Audit VM.Clone",
     # Pool-level admin role: full VM management within the resource pool
     "ProxmoxSession.Admin":     "VM.Console VM.PowerMgmt VM.Audit VM.Allocate VM.Config.Options VM.Clone Pool.Audit",
-    # Superadmin: manage groups/users + view all VMs
-    "ProxmoxSession.SuperAdmin": "User.Modify Group.Allocate Permissions.Modify VM.Audit",
+    # Superadmin: manage groups/users + view all VMs + list users/groups/pool
+    # User.Audit  — list all users (without it Proxmox returns only the current user)
+    # Group.Audit — read group membership/details
+    # Pool.Audit  — read pool members (VM Assignments tab)
+    "ProxmoxSession.SuperAdmin": (
+        "User.Modify User.Audit Group.Allocate Group.Audit "
+        "Permissions.Modify VM.Audit Pool.Audit"
+    ),
     # Pool deploy role for VDI users: lets them clone templates into the pool
     "ProxmoxSession.VDIDeploy": "VM.Allocate Datastore.AllocateSpace",
 }
@@ -75,19 +81,24 @@ def role_name(short_name: str) -> str:
 
 def create_proxmoxsession_roles(proxmox: proxmoxer.ProxmoxAPI) -> list[str]:
     """
-    Create all ProxmoxSession.* roles. Idempotent — skips existing roles.
-    Returns list of role IDs that were created.
+    Create or update all ProxmoxSession.* roles.
+    Existing roles are updated in-place so re-running the wizard repairs permissions.
+    Returns list of role IDs that were created (not updated).
     """
     created = []
     existing = {r["roleid"] for r in proxmox.access.roles.get()}
 
     for roleid, privs in ROLES.items():
+        # Normalize multi-line privilege strings to a single space-separated value
+        privs_str = " ".join(privs.split())
         if roleid in existing:
-            log.debug("Role %s already exists, skipping", roleid)
-            continue
-        proxmox.access.roles.post(roleid=roleid, privs=privs)
-        log.info("Created role: %s", roleid)
-        created.append(roleid)
+            # Always update to ensure privileges are current
+            proxmox.access.roles(roleid).put(privs=privs_str)
+            log.info("Updated role privileges: %s", roleid)
+        else:
+            proxmox.access.roles.post(roleid=roleid, privs=privs_str)
+            log.info("Created role: %s", roleid)
+            created.append(roleid)
 
     return created
 
@@ -170,15 +181,16 @@ def assign_group_permissions(
             propagate=1,
         )
         log.info("ACL: %s → ProxmoxSession.SuperAdmin on /vms", groupid)
-        # SuperAdmin needs User.Modify on /access to create users
-        # (group-scoped ACLs alone only allow modifying existing group membership)
+        # SuperAdmin needs the role on /access with propagate=1 so it covers
+        # /access/users (User.Audit/Modify), /access/groups (Group.Allocate/Audit),
+        # and /access/roles — without propagation these sub-paths are not covered.
         proxmox.access.acl.put(
             path="/access",
             groups=groupid,
             roles="ProxmoxSession.SuperAdmin",
-            propagate=0,
+            propagate=1,
         )
-        log.info("ACL: %s → ProxmoxSession.SuperAdmin on /access (user creation)", groupid)
+        log.info("ACL: %s → ProxmoxSession.SuperAdmin on /access (propagate)", groupid)
     elif short_name == "admin":
         # Admin manages VMs in the resource pool
         pool_path = f"/pool/{POOL_NAME}"
