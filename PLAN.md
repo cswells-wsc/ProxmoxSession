@@ -105,8 +105,10 @@ ProxmoxSession/
 | Git repo / one-line install | ❌ | ✅ | github.com/cswells-wsc/ProxmoxSession |
 | Security hardening | ❌ | ✅ | Credential redaction, file permissions, no shell injection |
 | INI backward-compatibility | — | ✅ | Existing vdiclient.ini files work unchanged |
-| Proxmox Setup Wizard | ❌ | ✅ | 7-page wizard; groups/roles/ACLs/users; launched from Host tab |
-| Superadmin Manage window | ❌ | ✅ | Groups + Users tabs; scoped to proxmoxsession_* only |
+| Proxmox Setup Wizard | ❌ | ✅ | Creates pool, groups, roles, ACLs, users; launched from Host tab |
+| Superadmin Manage window | ❌ | ✅ | Groups, Users, VM Assignments tabs; scoped to proxmoxsession_* only |
+| Resource pool management | ❌ | ✅ | proxmoxsession_resources pool; admin scoped to pool; per-user VM ACLs |
+| Templates in VM list | ❌ | ✅ | Templates shown with Deploy VM button; VMs show Reboot + Shutdown |
 | TOTP countdown timer | ❌ | ❌ | Not yet implemented |
 | Multi-monitor / display selector | ❌ | ❌ | Not yet implemented |
 | Connection profiles (last VM per user) | ❌ | ❌ | Not yet implemented |

@@ -82,21 +82,41 @@ Shows everything created (green) or failed (red). Review any failures and retry 
 
 ## What Gets Created
 
+### Resource Pool
+
+The wizard creates the `proxmoxsession_resources` Proxmox resource pool. This is where
+all ProxmoxSession-managed VMs and templates live. Admins manage VMs in this pool;
+VDI users can deploy clones into it.
+
+Add VMs and templates to this pool from the Proxmox web UI (Datacenter → Pool → Members)
+or via the CLI: `pvesh create /pools/proxmoxsession_resources/members --vms 100,101`.
+
 ### Roles
 
 | Role | Privileges |
 |---|---|
-| `ProxmoxSession.VDIUser` | `VM.Console VM.PowerMgmt VM.Audit` |
-| `ProxmoxSession.Admin` | `VM.Console VM.PowerMgmt VM.Audit VM.Allocate VM.Config.Options` |
-| `ProxmoxSession.SuperAdmin` | `User.Modify Group.Allocate Permissions.Modify` |
+| `ProxmoxSession.VDIUser` | `VM.Console VM.PowerMgmt VM.Audit VM.Clone` |
+| `ProxmoxSession.Admin` | `VM.Console VM.PowerMgmt VM.Audit VM.Allocate VM.Config.Options VM.Clone Pool.Audit` |
+| `ProxmoxSession.SuperAdmin` | `User.Modify Group.Allocate Permissions.Modify VM.Audit` |
+| `ProxmoxSession.VDIDeploy` | `VM.Allocate Datastore.AllocateSpace` |
 
 ### ACLs
 
-| Path | Group | Role |
-|---|---|---|
-| `/vms` (or chosen scope) | `proxmoxsession_vdiuser` | `ProxmoxSession.VDIUser` |
-| `/vms` (or chosen scope) | `proxmoxsession_admin` | `ProxmoxSession.Admin` |
-| `/access/groups/proxmoxsession_*` | `proxmoxsession_superadmin` | `ProxmoxSession.SuperAdmin` |
+| Path | Group | Role | Purpose |
+|---|---|---|---|
+| `/vms` | `proxmoxsession_superadmin` | `ProxmoxSession.SuperAdmin` | Superadmin sees all VMs |
+| `/pool/proxmoxsession_resources` | `proxmoxsession_admin` | `ProxmoxSession.Admin` | Admin manages pool VMs |
+| `/pool/proxmoxsession_resources` | `proxmoxsession_vdiuser` | `ProxmoxSession.VDIDeploy` | VDI users can clone into pool |
+| `/vms/<vmid>` | individual user | `ProxmoxSession.VDIUser` | Per-user VM assignment (via Manage window) |
+| `/access/groups/proxmoxsession_*` | `proxmoxsession_superadmin` | `ProxmoxSession.SuperAdmin` | Superadmin manages groups |
+
+### VM Access Model
+
+- **SuperAdmin** sees all VMs on the cluster (via `VM.Audit` on `/vms`)
+- **Admin** fully manages VMs in the `proxmoxsession_resources` pool
+- **VDI Users** only see VMs explicitly assigned to them by an admin (per-VM ACLs on `/vms/<vmid>`)
+- VDI Users can clone templates assigned to them — the clone is placed in the resource pool
+  and must be assigned to them by an admin before they can connect
 
 The superadmin group receives management access scoped to each `proxmoxsession_*` group path —
 it cannot see or modify `root@pam` or any users outside ProxmoxSession groups.

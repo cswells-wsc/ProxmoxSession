@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..access import (
+    POOL_NAME,
     PREFIX,
     STANDARD_GROUPS,
     run_full_setup,
@@ -323,15 +324,26 @@ class PermissionsPage(QWizardPage):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setTitle("VM Permissions")
-        self.setSubTitle("Choose which VMs the ProxmoxSession groups can access.")
+        self.setSubTitle("Choose which VMs the ProxmoxSession admin group can manage.")
         self._pools: list[str] = []
 
         layout = QVBoxLayout(self)
 
-        self._all_radio = QRadioButton("All VMs  (/vms)")
+        pool_note = QLabel(
+            f"<b>Note:</b> The wizard will automatically create the resource pool "
+            f"<code>{POOL_NAME}</code>. Admins manage VMs in this pool; "
+            f"VDI users can deploy templates into it. Individual VM access is "
+            f"assigned per user via the Manage window after setup.<br><br>"
+            f"<b>For custom groups</b>, also select a path below:"
+        )
+        pool_note.setWordWrap(True)
+        pool_note.setStyleSheet("font-size: 11px; color: gray;")
+        layout.addWidget(pool_note)
+
+        self._all_radio = QRadioButton("All VMs  (/vms)  — custom groups get access here")
         self._all_radio.setChecked(True)
-        self._pool_radio = QRadioButton("Specific resource pool:")
-        self._vmid_radio = QRadioButton("Specific VMIDs:")
+        self._pool_radio = QRadioButton("Specific pool  — custom groups get access to this pool:")
+        self._vmid_radio = QRadioButton("Specific VMIDs  — custom groups get access here:")
 
         self._pool_combo = QComboBox()
         self._pool_combo.setEnabled(False)

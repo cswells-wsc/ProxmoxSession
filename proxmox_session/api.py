@@ -1,5 +1,5 @@
 """
-Proxmox API helpers — VM listing and VM actions (start, stop, connect).
+Proxmox API helpers — VM listing, templates, and VM actions.
 All Proxmox API calls are isolated here, away from the UI layer.
 """
 
@@ -25,10 +25,15 @@ class ProxmoxAPIError(Exception):
     pass
 
 
-def get_vms(proxmox: proxmoxer.ProxmoxAPI, guest_type: str = "both") -> list[VMInfo]:
+def get_vms(
+    proxmox: proxmoxer.ProxmoxAPI,
+    guest_type: str = "both",
+    include_templates: bool = False,
+) -> list[VMInfo]:
     """
-    Return all non-template VMs the current user can see, filtered by guest_type.
+    Return VMs the current user can see, filtered by guest_type.
     guest_type: "both", "qemu", or "lxc"
+    include_templates: if True, also return template VMs
     Raises ProxmoxAPIError on failure.
     """
     try:
@@ -42,7 +47,8 @@ def get_vms(proxmox: proxmoxer.ProxmoxAPI, guest_type: str = "both") -> list[VMI
         for vm in proxmox.cluster.resources.get(type="vm"):
             if vm["node"] not in online_nodes:
                 continue
-            if vm.get("template"):
+            is_tmpl = bool(vm.get("template"))
+            if is_tmpl and not include_templates:
                 continue
             if guest_type != "both" and vm["type"] != guest_type:
                 continue
@@ -54,6 +60,7 @@ def get_vms(proxmox: proxmoxer.ProxmoxAPI, guest_type: str = "both") -> list[VMI
                     vmtype=vm["type"],
                     status=vm.get("status", "unknown"),
                     lock=vm.get("lock"),
+                    is_template=is_tmpl,
                 )
             )
         return vms
@@ -76,7 +83,7 @@ def start_vm(proxmox: proxmoxer.ProxmoxAPI, vm: VMInfo, timeout: int = 28) -> st
 
 
 def stop_vm(proxmox: proxmoxer.ProxmoxAPI, vm: VMInfo, timeout: int = 28) -> str:
-    """Stop a VM. Returns the task job ID."""
+    """Force-stop a VM. Returns the task job ID."""
     try:
         if vm.vmtype == "qemu":
             return proxmox.nodes(vm.node).qemu(str(vm.vmid)).status.stop.post(timeout=timeout)
@@ -84,6 +91,71 @@ def stop_vm(proxmox: proxmoxer.ProxmoxAPI, vm: VMInfo, timeout: int = 28) -> str
             return proxmox.nodes(vm.node).lxc(str(vm.vmid)).status.stop.post(timeout=timeout)
     except proxmoxer.core.ResourceException as e:
         raise ProxmoxAPIError(f"Failed to stop VM {vm.vmid}: {e}") from e
+
+
+def reboot_vm(proxmox: proxmoxer.ProxmoxAPI, vm: VMInfo) -> str:
+    """
+    Gracefully reboot a VM (ACPI/guest-agent signal).
+    Returns the task job ID.
+    """
+    try:
+        if vm.vmtype == "qemu":
+            return proxmox.nodes(vm.node).qemu(str(vm.vmid)).status.reboot.post()
+        else:
+            return proxmox.nodes(vm.node).lxc(str(vm.vmid)).status.reboot.post()
+    except proxmoxer.core.ResourceException as e:
+        raise ProxmoxAPIError(f"Failed to reboot VM {vm.vmid}: {e}") from e
+
+
+def shutdown_vm(proxmox: proxmoxer.ProxmoxAPI, vm: VMInfo, timeout: int = 60) -> str:
+    """
+    Gracefully shut down a VM (ACPI signal). Falls back to stop after timeout.
+    Returns the task job ID.
+    """
+    try:
+        if vm.vmtype == "qemu":
+            return proxmox.nodes(vm.node).qemu(str(vm.vmid)).status.shutdown.post(
+                timeout=timeout, forceStop=1
+            )
+        else:
+            return proxmox.nodes(vm.node).lxc(str(vm.vmid)).status.shutdown.post(
+                timeout=timeout, forceStop=1
+            )
+    except proxmoxer.core.ResourceException as e:
+        raise ProxmoxAPIError(f"Failed to shutdown VM {vm.vmid}: {e}") from e
+
+
+def clone_vm(
+    proxmox: proxmoxer.ProxmoxAPI,
+    vm: VMInfo,
+    new_name: str,
+    pool: str = "proxmoxsession_resources",
+    full: bool = True,
+) -> tuple[int, str]:
+    """
+    Clone a VM or template to a new VM. Returns (new_vmid, task_job_id).
+    The new VM is placed in the specified pool.
+    Raises ProxmoxAPIError on failure.
+    """
+    if vm.vmtype != "qemu":
+        raise ProxmoxAPIError("Clone is only supported for QEMU VMs (not LXC containers).")
+    try:
+        new_vmid = int(proxmox.cluster.nextid.get())
+        job_id = proxmox.nodes(vm.node).qemu(str(vm.vmid)).clone.post(
+            newid=new_vmid,
+            name=new_name,
+            pool=pool,
+            full=1 if full else 0,
+        )
+        log_msg = "full" if full else "linked"
+        import logging
+        logging.getLogger(__name__).info(
+            "Clone (%s) of VM %s → %s (%s), task: %s",
+            log_msg, vm.vmid, new_vmid, new_name, job_id,
+        )
+        return new_vmid, str(job_id)
+    except proxmoxer.core.ResourceException as e:
+        raise ProxmoxAPIError(f"Failed to clone VM {vm.vmid}: {e}") from e
 
 
 def get_vm_status(proxmox: proxmoxer.ProxmoxAPI, vm: VMInfo) -> dict:

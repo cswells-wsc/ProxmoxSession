@@ -1,6 +1,6 @@
 """
-VM list window — shows all accessible VMs with status badges, search filter,
-Connect / Reset buttons, and 5-second auto-refresh via QTimer.
+VM list window — shows VMs and templates with status badges, search filter,
+Connect / Reboot / Shutdown / Deploy buttons, and 5-second auto-refresh via QTimer.
 """
 
 import json
@@ -24,11 +24,23 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..api import ProxmoxAPIError, VMInfo, get_spice_config, get_vms, start_vm, stop_vm, wait_for_task
+from ..access import POOL_NAME
+from ..api import (
+    ProxmoxAPIError,
+    VMInfo,
+    clone_vm,
+    get_spice_config,
+    get_vms,
+    reboot_vm,
+    shutdown_vm,
+    start_vm,
+    stop_vm,
+    wait_for_task,
+)
 from ..config import AppConfig
 from ..spice import build_spice_ini, get_vv_path_for_debug, launch_viewer
 from ..utils.system import find_remote_viewer
-from .dialogs import ConnectDialog, ask_yes_no, show_error, show_info
+from .dialogs import ConnectDialog, DeployVMDialog, ask_yes_no, show_error, show_info
 
 log = logging.getLogger(__name__)
 
@@ -69,21 +81,56 @@ _STATUS_COLORS = {
     "paused":     ("#f9e2af", "Paused"),
 }
 
+_TEMPLATE_COLOR = ("#89b4fa", "Template")
+
 
 class _VMRefreshWorker(QThread):
-    """Background thread that fetches the VM list without blocking the UI."""
-    refreshed = pyqtSignal(list)   # emits list[VMInfo]
+    """Background thread that fetches VMs and templates without blocking the UI."""
+    refreshed = pyqtSignal(list)   # emits list[VMInfo] (includes templates)
     error = pyqtSignal(str)
 
-    def __init__(self, proxmox, guest_type):
+    def __init__(self, proxmox: proxmoxer.ProxmoxAPI, guest_type: str):
         super().__init__()
         self.proxmox = proxmox
         self.guest_type = guest_type
 
-    def run(self):
+    def run(self) -> None:
         try:
-            vms = get_vms(self.proxmox, self.guest_type)
+            vms = get_vms(self.proxmox, self.guest_type, include_templates=True)
             self.refreshed.emit(vms)
+        except ProxmoxAPIError as e:
+            self.error.emit(str(e))
+
+
+class _CloneWorker(QThread):
+    """Background thread for VM clone operations (can take 10-60+ seconds)."""
+    finished = pyqtSignal(int, str)   # (new_vmid, vm_name)
+    error = pyqtSignal(str)
+
+    def __init__(
+        self,
+        proxmox: proxmoxer.ProxmoxAPI,
+        vm: VMInfo,
+        new_name: str,
+        full: bool,
+        pool: str,
+    ):
+        super().__init__()
+        self.proxmox = proxmox
+        self.vm = vm
+        self.new_name = new_name
+        self.full = full
+        self.pool = pool
+
+    def run(self) -> None:
+        try:
+            new_vmid, job_id = clone_vm(
+                self.proxmox, self.vm, self.new_name,
+                pool=self.pool, full=self.full,
+            )
+            # Wait for clone task to complete (up to 5 minutes for large disks)
+            wait_for_task(self.proxmox, self.vm.node, job_id, max_wait=300)
+            self.finished.emit(new_vmid, self.new_name)
         except ProxmoxAPIError as e:
             self.error.emit(str(e))
 
@@ -105,19 +152,16 @@ class VMListWindow(QMainWindow):
         self._vms: list[VMInfo] = []
         self._vvcmd: Optional[str] = None
         self._prefs: dict = _load_prefs()
+        self._clone_worker: Optional[_CloneWorker] = None
 
         self.setWindowTitle(config.title)
 
         if sys.platform == "win32":
-            # Windows: normal window with title bar, close, and minimize buttons.
-            # Fullscreen is still respected if the user explicitly sets it in config,
-            # but kiosk (frameless) mode is never applied.
             if config.fullscreen:
                 self.showMaximized()
             else:
                 self.show()
         else:
-            # Linux session: support kiosk (frameless) and true fullscreen.
             if config.kiosk:
                 self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
             if config.fullscreen or config.kiosk:
@@ -136,7 +180,7 @@ class VMListWindow(QMainWindow):
         self._timer.timeout.connect(self._refresh_vms)
         self._timer.start()
 
-    def _build_ui(self):
+    def _build_ui(self) -> None:
         cfg = self.config
         central = QWidget()
         self.setCentralWidget(central)
@@ -164,17 +208,26 @@ class VMListWindow(QMainWindow):
 
         # Search bar
         self._search = QLineEdit()
-        self._search.setPlaceholderText("Search VMs…")
+        self._search.setPlaceholderText("Search VMs and templates…")
         self._search.textChanged.connect(self._apply_filter)
         root.addWidget(self._search)
 
-        # VM table
+        # VM table — 4 columns: Name | Type/Status | [action buttons]
         self._table = QTableWidget()
         self._table.setColumnCount(4)
-        self._table.setHorizontalHeaderLabels(["Name", "Status", "", ""])
-        self._table.horizontalHeader().setStretchLastSection(False)
-        self._table.horizontalHeader().setSectionResizeMode(0, self._table.horizontalHeader().ResizeMode.Stretch)
-        self._table.verticalHeader().setVisible(False)
+        self._table.setHorizontalHeaderLabels(["Name", "Type", "Status", "Actions"])
+        h = self._table.horizontalHeader()
+        if h:
+            h.setStretchLastSection(False)
+            h.setSectionResizeMode(0, h.ResizeMode.Stretch)
+            h.setSectionResizeMode(1, h.ResizeMode.Fixed)
+            h.setSectionResizeMode(2, h.ResizeMode.Fixed)
+            h.setSectionResizeMode(3, h.ResizeMode.ResizeToContents)
+        self._table.setColumnWidth(1, 90)
+        self._table.setColumnWidth(2, 100)
+        v = self._table.verticalHeader()
+        if v:
+            v.setVisible(False)
         self._table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setShowGrid(False)
@@ -184,77 +237,132 @@ class VMListWindow(QMainWindow):
         if cfg.width and cfg.height:
             self.resize(cfg.width, cfg.height)
         else:
-            self.resize(820, 500)
+            self.resize(900, 520)
 
-    def _refresh_vms(self):
+    def _refresh_vms(self) -> None:
         worker = _VMRefreshWorker(self.proxmox, self.config.guest_type)
         worker.refreshed.connect(self._on_vms_refreshed)
         worker.error.connect(lambda msg: show_error(self, msg))
         worker.start()
         self._worker = worker  # keep reference alive
 
-    def _on_vms_refreshed(self, vms: list[VMInfo]):
+    def _on_vms_refreshed(self, vms: list[VMInfo]) -> None:
         self._vms = vms
         self._apply_filter(self._search.text())
 
-    def _apply_filter(self, text: str):
+    def _apply_filter(self, text: str) -> None:
         query = text.strip().lower()
         filtered = [v for v in self._vms if query in v.name.lower() or query in str(v.vmid)]
         self._populate_table(filtered)
 
-    def _populate_table(self, vms: list[VMInfo]):
+    def _populate_table(self, vms: list[VMInfo]) -> None:
         self._table.setRowCount(0)
-        for vm in vms:
+
+        # Sort: templates first, then VMs alphabetically
+        sorted_vms = sorted(vms, key=lambda v: (not v.is_template, v.name.lower()))
+
+        for vm in sorted_vms:
             row = self._table.rowCount()
             self._table.insertRow(row)
 
-            # Name
-            name_item = QTableWidgetItem(f"{vm.name}  (ID {vm.vmid})")
+            # Col 0: Name + VMID
+            type_tag = " [Template]" if vm.is_template else ""
+            name_item = QTableWidgetItem(f"{vm.name}{type_tag}  (ID {vm.vmid})")
             self._table.setItem(row, 0, name_item)
 
-            # Status badge
-            status_key = vm.lock if vm.lock else vm.status
-            color, label = _STATUS_COLORS.get(status_key, ("#cdd6f4", status_key.capitalize()))
-            badge = QLabel(f"  {label}  ")
-            badge.setStyleSheet(
-                f"background-color: {color}; color: #1e1e2e; border-radius: 8px; "
-                f"font-weight: bold; padding: 2px 6px;"
-            )
-            badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._table.setCellWidget(row, 1, badge)
+            # Col 1: Type badge (QEMU / LXC / Template)
+            if vm.is_template:
+                type_color, type_label = _TEMPLATE_COLOR
+            elif vm.vmtype == "qemu":
+                type_color, type_label = ("#cba6f7", "QEMU")
+            else:
+                type_color, type_label = ("#89dceb", "LXC")
+            type_badge = _make_badge(f"  {type_label}  ", type_color)
+            self._table.setCellWidget(row, 1, type_badge)
 
-            # Connect button
-            conn_btn = QPushButton("Connect")
-            conn_btn.setProperty("vmid", vm.vmid)
-            is_suspended = status_key in ("suspended", "suspending")
-            conn_btn.setEnabled(not is_suspended)
-            conn_btn.clicked.connect(lambda _, v=vm: self._on_connect(v))
-            self._table.setCellWidget(row, 2, conn_btn)
+            # Col 2: Status badge (templates show a dash)
+            if vm.is_template:
+                status_badge = _make_badge("  —  ", "#585b70")
+            else:
+                status_key = vm.lock if vm.lock else vm.status
+                color, label = _STATUS_COLORS.get(status_key, ("#cdd6f4", status_key.capitalize()))
+                status_badge = _make_badge(f"  {label}  ", color)
+            self._table.setCellWidget(row, 2, status_badge)
 
-            # Reset button (optional)
-            if self.config.show_reset:
-                reset_btn = QPushButton("Reset")
-                reset_btn.clicked.connect(lambda _, v=vm: self._on_reset(v))
-                self._table.setCellWidget(row, 3, reset_btn)
+            # Col 3: Action buttons
+            actions = self._make_actions_widget(vm)
+            self._table.setCellWidget(row, 3, actions)
 
         self._table.resizeRowsToContents()
 
-    def _on_connect(self, vm: VMInfo):
+    def _make_actions_widget(self, vm: VMInfo) -> QWidget:
+        """Build the actions cell for a VM or template row."""
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setSpacing(4)
+
+        if vm.is_template:
+            # Templates: Deploy VM button only
+            deploy_btn = QPushButton("Deploy VM…")
+            deploy_btn.setFixedWidth(100)
+            deploy_btn.setToolTip(f"Create a new VM from template '{vm.name}'")
+            deploy_btn.clicked.connect(lambda _, v=vm: self._on_deploy(v))
+            layout.addWidget(deploy_btn)
+        else:
+            is_running = vm.status == "running"
+            is_suspended = vm.status in ("suspended", "suspending")
+
+            # Connect button
+            conn_btn = QPushButton("Connect")
+            conn_btn.setFixedWidth(80)
+            conn_btn.setEnabled(not is_suspended)
+            conn_btn.setToolTip("Start VM if needed, then open SPICE session")
+            conn_btn.clicked.connect(lambda _, v=vm: self._on_connect(v))
+            layout.addWidget(conn_btn)
+
+            # Reboot button (only useful when running)
+            reboot_btn = QPushButton("Reboot")
+            reboot_btn.setFixedWidth(68)
+            reboot_btn.setEnabled(is_running)
+            reboot_btn.setToolTip("Graceful reboot (ACPI signal)")
+            reboot_btn.clicked.connect(lambda _, v=vm: self._on_reboot(v))
+            layout.addWidget(reboot_btn)
+
+            # Shutdown button (only useful when running)
+            shutdown_btn = QPushButton("Shutdown")
+            shutdown_btn.setFixedWidth(78)
+            shutdown_btn.setEnabled(is_running)
+            shutdown_btn.setToolTip("Graceful shutdown (ACPI signal)")
+            shutdown_btn.clicked.connect(lambda _, v=vm: self._on_shutdown(v))
+            layout.addWidget(shutdown_btn)
+
+            # Optional Reset button
+            if self.config.show_reset:
+                reset_btn = QPushButton("Reset")
+                reset_btn.setFixedWidth(60)
+                reset_btn.setToolTip("Force stop and restart")
+                reset_btn.clicked.connect(lambda _, v=vm: self._on_reset(v))
+                layout.addWidget(reset_btn)
+
+        layout.addStretch()
+        return container
+
+    # ── VM actions ────────────────────────────────────────────────────────────
+
+    def _on_connect(self, vm: VMInfo) -> None:
         if not self._vvcmd:
             show_error(self, "remote-viewer not found. Install virt-viewer.")
             return
 
-        # Pre-connection dialog — USB redirection opt-in
         vm_prefs = self._prefs.get(str(vm.vmid), {})
         dlg = ConnectDialog(self, vm_name=vm.name, usb_default=vm_prefs.get("usb", False))
         if dlg.exec() != ConnectDialog.DialogCode.Accepted:
             return
 
-        # Save USB preference for this VM
         self._prefs[str(vm.vmid)] = {"usb": dlg.usb_enabled}
         _save_prefs(self._prefs)
 
-        # Start VM if stopped
         if vm.status != "running":
             if not self._start_and_wait(vm):
                 return
@@ -273,18 +381,13 @@ class VMListWindow(QMainWindow):
             addl.setdefault("enable-usbredir", "true")
             addl.setdefault("enable-usb-autoshare", "true")
 
-        ini = build_spice_ini(
-            spice_data,
-            self.config.spiceproxy_conv,
-            addl,
-        )
+        ini = build_spice_ini(spice_data, self.config.spiceproxy_conv, addl)
 
         import re
         safe_ini = re.sub(r"(?im)^(password\s*=\s*).*$", r"\1***", ini)
         log.debug("Built .vv file contents:\n%s", safe_ini)
 
         if self.config.inidebug:
-            import os
             vv_path = get_vv_path_for_debug(ini)
             show_info(
                 self,
@@ -303,13 +406,69 @@ class VMListWindow(QMainWindow):
             viewer_kiosk=self.config.viewer_kiosk,
             fullscreen=self.config.fullscreen,
         )
-        # After viewer exits, refresh VM list
         self._refresh_vms()
 
-    def _on_reset(self, vm: VMInfo):
+    def _on_reboot(self, vm: VMInfo) -> None:
+        if not ask_yes_no(self, f"Reboot VM '{vm.name}'?\n\nThis sends an ACPI reboot signal."):
+            return
+        try:
+            reboot_vm(self.proxmox, vm)
+            log.info("Reboot requested for VM %s", vm.vmid)
+            self._refresh_vms()
+        except ProxmoxAPIError as e:
+            show_error(self, str(e))
+
+    def _on_shutdown(self, vm: VMInfo) -> None:
+        if not ask_yes_no(self, f"Shut down VM '{vm.name}'?\n\nThis sends an ACPI shutdown signal. "
+                           "The VM will force-stop after 60 seconds if the guest does not respond."):
+            return
+        try:
+            shutdown_vm(self.proxmox, vm)
+            log.info("Shutdown requested for VM %s", vm.vmid)
+            self._refresh_vms()
+        except ProxmoxAPIError as e:
+            show_error(self, str(e))
+
+    def _on_reset(self, vm: VMInfo) -> None:
         if not ask_yes_no(self, f"Reset VM '{vm.name}'? This will force-stop and restart it."):
             return
         self._start_and_wait(vm, force_restart=True)
+
+    def _on_deploy(self, vm: VMInfo) -> None:
+        """Clone a template to a new VM."""
+        dlg = DeployVMDialog(self, template_name=vm.name)
+        if dlg.exec() != DeployVMDialog.DialogCode.Accepted:
+            return
+
+        if self._clone_worker and self._clone_worker.isRunning():
+            show_error(self, "A deploy operation is already in progress. Please wait.")
+            return
+
+        self._clone_worker = _CloneWorker(
+            self.proxmox, vm, dlg.vm_name, dlg.full_clone, POOL_NAME
+        )
+        self._clone_worker.finished.connect(self._on_clone_done)
+        self._clone_worker.error.connect(lambda msg: show_error(self, f"Deploy failed:\n{msg}"))
+        self._clone_worker.start()
+
+        show_info(
+            self,
+            f"Deploying '{dlg.vm_name}' from template '{vm.name}'…\n\n"
+            "This may take a minute for large disks. The VM list will refresh automatically.",
+            title="Deploying VM",
+        )
+
+    def _on_clone_done(self, new_vmid: int, new_name: str) -> None:
+        show_info(
+            self,
+            f"VM '{new_name}' (ID {new_vmid}) has been created in the "
+            f"proxmoxsession_resources pool.\n\n"
+            "An administrator may need to assign it to your account before you can connect.",
+            title="Deploy Complete",
+        )
+        self._refresh_vms()
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _start_and_wait(self, vm: VMInfo, force_restart: bool = False) -> bool:
         try:
@@ -327,7 +486,18 @@ class VMListWindow(QMainWindow):
             show_error(self, str(e))
             return False
 
-    def _on_logout(self):
+    def _on_logout(self) -> None:
         self._timer.stop()
         self.logged_out.emit()
         self.close()
+
+
+def _make_badge(text: str, bg_color: str) -> QLabel:
+    """Create a small colored badge label for use in table cells."""
+    badge = QLabel(text)
+    badge.setStyleSheet(
+        f"background-color: {bg_color}; color: #1e1e2e; border-radius: 8px; "
+        f"font-weight: bold; padding: 2px 6px;"
+    )
+    badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    return badge

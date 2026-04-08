@@ -18,8 +18,10 @@ Based on [PVE-VDIClient](https://github.com/joshpatten/PVE-VDIClient), rewritten
 - Per-session USB redirection toggle (remembered per VM)
 - Dark / light / system themes (QSS)
 - GUI config editor with one tab per host cluster (requires elevation on Linux)
-- **Proxmox Setup Wizard** — first-time setup of groups, roles, and users via GUI (launched from config editor)
-- **Superadmin Manage window** — add/remove users and groups after setup (scoped to ProxmoxSession accounts only)
+- **Proxmox Setup Wizard** — first-time setup: creates `proxmoxsession_resources` pool, groups, roles, ACLs, and users
+- **Superadmin Manage window** — Groups, Users, and VM Assignments tabs; scoped to ProxmoxSession accounts only
+- **Templates in VM list** — templates show alongside VMs; click "Deploy VM" to clone; per-user VM assignment by admin
+- **Reboot / Shutdown buttons** — graceful ACPI reboot and shutdown per VM (alongside Connect)
 - API token auto-login
 - TOTP / OTP support
 - Kiosk mode (Linux only)

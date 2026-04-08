@@ -17,20 +17,25 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from proxmox_session import access
 from proxmox_session.access import (
+    POOL_NAME,
     PREFIX,
     ROLES,
     STANDARD_GROUPS,
     assign_custom_group_permissions,
     assign_group_permissions,
+    assign_vm_to_user,
     create_proxmoxsession_group,
+    create_proxmoxsession_pool,
     create_proxmoxsession_roles,
     create_user,
     group_name,
     is_protected,
     list_proxmoxsession_groups,
     list_proxmoxsession_users,
+    list_vmids_for_user,
     role_name,
     run_full_setup,
+    unassign_vm_from_user,
     wizard_already_run,
 )
 
@@ -133,30 +138,41 @@ class TestCreateGroup(unittest.TestCase):
 # ── assign_group_permissions ──────────────────────────────────────────────────
 
 class TestAssignGroupPermissions(unittest.TestCase):
-    def test_grants_vm_acl_and_superadmin_acl(self):
+    def test_superadmin_gets_vms_path(self):
         px = _make_proxmox()
-        assign_group_permissions(px, "vdiuser", "/vms")
+        assign_group_permissions(px, "superadmin", "/vms")
         calls = px.access.acl.put.call_args_list
-        # Should have called put twice: VM access + superadmin group management
-        self.assertEqual(len(calls), 2)
-
-        # First call: VM access for the group
+        # First call: /vms with SuperAdmin
         first = calls[0]
         self.assertEqual(first.kwargs["path"], "/vms")
-        self.assertIn("proxmoxsession_vdiuser", first.kwargs["groups"])
+        self.assertEqual(first.kwargs["roles"], "ProxmoxSession.SuperAdmin")
 
-        # Second call: superadmin can manage this group
-        second = calls[1]
-        self.assertIn("/access/groups/proxmoxsession_vdiuser", second.kwargs["path"])
-        self.assertIn("proxmoxsession_superadmin", second.kwargs["groups"])
-
-    def test_standard_groups_get_correct_roles(self):
+    def test_admin_gets_pool_path(self):
         px = _make_proxmox()
-        for short_name, info in STANDARD_GROUPS.items():
+        assign_group_permissions(px, "admin", "/vms")
+        first = px.access.acl.put.call_args_list[0]
+        self.assertIn(f"/pool/{POOL_NAME}", first.kwargs["path"])
+        self.assertEqual(first.kwargs["roles"], "ProxmoxSession.Admin")
+
+    def test_vdiuser_gets_deploy_role_on_pool(self):
+        px = _make_proxmox()
+        assign_group_permissions(px, "vdiuser", "/vms")
+        first = px.access.acl.put.call_args_list[0]
+        self.assertIn(f"/pool/{POOL_NAME}", first.kwargs["path"])
+        self.assertEqual(first.kwargs["roles"], "ProxmoxSession.VDIDeploy")
+
+    def test_superadmin_management_acl_always_granted(self):
+        """Every group gets a superadmin management ACL on /access/groups/<gid>."""
+        px = _make_proxmox()
+        for short_name in STANDARD_GROUPS:
             px.reset_mock()
             assign_group_permissions(px, short_name, "/vms")
-            first_call = px.access.acl.put.call_args_list[0]
-            self.assertEqual(first_call.kwargs["roles"], info["role"])
+            paths = [c.kwargs["path"] for c in px.access.acl.put.call_args_list]
+            gid = group_name(short_name)
+            self.assertTrue(
+                any(f"/access/groups/{gid}" in p for p in paths),
+                f"Expected superadmin group management ACL for {gid}"
+            )
 
 
 # ── create_user ───────────────────────────────────────────────────────────────
@@ -232,6 +248,82 @@ class TestListUsers(unittest.TestCase):
         self.assertIn("admin@pve", userids)
 
 
+# ── create_proxmoxsession_pool ────────────────────────────────────────────────
+
+class TestCreatePool(unittest.TestCase):
+    def test_creates_pool_when_not_existing(self):
+        px = _make_proxmox()
+        px.pools.get.return_value = []
+        result = create_proxmoxsession_pool(px)
+        self.assertTrue(result)
+        px.pools.post.assert_called_once_with(
+            poolid=POOL_NAME,
+            comment="ProxmoxSession managed VMs and templates",
+        )
+
+    def test_skips_existing_pool(self):
+        px = _make_proxmox()
+        px.pools.get.return_value = [{"poolid": POOL_NAME}]
+        result = create_proxmoxsession_pool(px)
+        self.assertFalse(result)
+        px.pools.post.assert_not_called()
+
+
+# ── assign_vm_to_user / unassign_vm_from_user ─────────────────────────────────
+
+class TestVMAssignment(unittest.TestCase):
+    def test_assign_vm_sets_acl(self):
+        px = _make_proxmox()
+        assign_vm_to_user(px, "alice@pve", 100)
+        px.access.acl.put.assert_called_once_with(
+            path="/vms/100",
+            users="alice@pve",
+            roles="ProxmoxSession.VDIUser",
+            propagate=1,
+        )
+
+    def test_assign_vm_raises_for_protected(self):
+        px = _make_proxmox()
+        with self.assertRaises(ValueError):
+            assign_vm_to_user(px, "root@pam", 100)
+
+    def test_unassign_vm_deletes_acl(self):
+        px = _make_proxmox()
+        unassign_vm_from_user(px, "alice@pve", 100)
+        px.access.acl.put.assert_called_once()
+        call_kwargs = px.access.acl.put.call_args.kwargs
+        self.assertEqual(call_kwargs["path"], "/vms/100")
+        self.assertEqual(call_kwargs.get("delete"), 1)
+
+    def test_unassign_protected_is_noop(self):
+        px = _make_proxmox()
+        unassign_vm_from_user(px, "root@pam", 100)
+        px.access.acl.put.assert_not_called()
+
+
+# ── list_vmids_for_user ───────────────────────────────────────────────────────
+
+class TestListVmidsForUser(unittest.TestCase):
+    def test_returns_assigned_vmids(self):
+        px = _make_proxmox()
+        px.access.acl.get.return_value = [
+            {"ugid": "alice@pve", "type": "user", "path": "/vms/100", "roleid": "ProxmoxSession.VDIUser"},
+            {"ugid": "alice@pve", "type": "user", "path": "/vms/200", "roleid": "ProxmoxSession.VDIUser"},
+            {"ugid": "bob@pve",   "type": "user", "path": "/vms/300", "roleid": "ProxmoxSession.VDIUser"},
+        ]
+        result = list_vmids_for_user(px, "alice@pve")
+        self.assertEqual(set(result), {100, 200})
+
+    def test_ignores_non_vm_paths(self):
+        px = _make_proxmox()
+        px.access.acl.get.return_value = [
+            {"ugid": "alice@pve", "type": "user", "path": "/access/groups/proxmoxsession_vdiuser"},
+            {"ugid": "alice@pve", "type": "user", "path": "/vms/101"},
+        ]
+        result = list_vmids_for_user(px, "alice@pve")
+        self.assertEqual(result, [101])
+
+
 # ── wizard_already_run ────────────────────────────────────────────────────────
 
 class TestWizardAlreadyRun(unittest.TestCase):
@@ -257,6 +349,8 @@ class TestRunFullSetup(unittest.TestCase):
         px.access.roles.get.return_value = []
         # Groups don't exist yet
         px.access.groups.get.return_value = []
+        # Pool doesn't exist yet
+        px.pools.get.return_value = []
         return px
 
     def test_creates_roles_groups_and_superadmin_user(self):
@@ -268,13 +362,18 @@ class TestRunFullSetup(unittest.TestCase):
             superadmin_username="psadmin",
             superadmin_password="Passw0rd!",
         )
-        # All three roles should be in created
         created_items = [r["item"] for r in results["created"]]
+        # All roles should be in created
         for roleid in ROLES:
             self.assertTrue(
                 any(roleid in item for item in created_items),
                 f"Expected role {roleid} in created items"
             )
+        # Resource pool should be created
+        self.assertTrue(
+            any(POOL_NAME in item for item in created_items),
+            f"Expected pool {POOL_NAME} in created items"
+        )
         # Standard groups should be created
         for short_name in STANDARD_GROUPS:
             full_gid = group_name(short_name)

@@ -30,16 +30,21 @@ from PyQt6.QtWidgets import (
 )
 
 from ..access import (
+    POOL_NAME,
     PREFIX,
     STANDARD_GROUPS,
     assign_custom_group_permissions,
+    assign_vm_to_user,
     create_proxmoxsession_group,
     create_user,
     group_name,
     is_protected,
     list_proxmoxsession_groups,
     list_proxmoxsession_users,
+    list_vmids_for_user,
+    unassign_vm_from_user,
 )
+from ..api import VMInfo, get_vms
 from ..config import HostConfig
 
 log = logging.getLogger(__name__)
@@ -581,6 +586,168 @@ class _AddUserDialog(QDialog):
             self._status.setText(f"Error: {e}")
 
 
+# ── VM Assignments tab ────────────────────────────────────────────────────────
+
+class _VMAssignmentsTab(QWidget):
+    """
+    Assign and unassign VMs and templates to individual VDI users.
+
+    Left panel: VMs/templates in the proxmoxsession_resources pool (unassigned to selected user).
+    Right panel: VMs/templates already assigned to the selected user.
+    Top: user selector dropdown.
+    """
+
+    def __init__(
+        self,
+        proxmox: proxmoxer.ProxmoxAPI,
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self._proxmox = proxmox
+        self._pool_vms: list[VMInfo] = []   # all VMs in pool
+        self._selected_user: str = ""
+
+        layout = QVBoxLayout(self)
+
+        # User selector
+        user_row = QHBoxLayout()
+        user_row.addWidget(QLabel("User:"))
+        self._user_combo = QComboBox()
+        self._user_combo.setMinimumWidth(200)
+        self._user_combo.currentIndexChanged.connect(self._on_user_changed)
+        user_row.addWidget(self._user_combo)
+        refresh_users_btn = QPushButton("Refresh Users")
+        refresh_users_btn.clicked.connect(self._refresh_users)
+        user_row.addWidget(refresh_users_btn)
+        user_row.addStretch()
+        layout.addLayout(user_row)
+
+        # Two-panel layout: pool VMs (left) ↔ assigned to user (right)
+        panels = QHBoxLayout()
+
+        # Left: available in pool
+        left = QVBoxLayout()
+        left.addWidget(QLabel("<b>Pool VMs &amp; Templates</b><br><small>(not yet assigned to user)</small>"))
+        self._pool_list = QListWidget()
+        left.addWidget(self._pool_list)
+        assign_btn = QPushButton("Assign →")
+        assign_btn.clicked.connect(self._on_assign)
+        left.addWidget(assign_btn)
+        panels.addLayout(left)
+
+        # Right: assigned to this user
+        right = QVBoxLayout()
+        right.addWidget(QLabel("<b>Assigned to User</b>"))
+        self._assigned_list = QListWidget()
+        right.addWidget(self._assigned_list)
+        unassign_btn = QPushButton("← Unassign")
+        unassign_btn.clicked.connect(self._on_unassign)
+        right.addWidget(unassign_btn)
+        panels.addLayout(right)
+
+        layout.addLayout(panels, 1)
+
+        note = QLabel(
+            "Assigning a VM grants the user <b>ProxmoxSession.VDIUser</b> role on that specific VM only. "
+            "Unassigning removes that ACL. Changes take effect immediately."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet("color: gray; font-size: 11px;")
+        layout.addWidget(note)
+
+        self._refresh_users()
+        self._refresh_pool_vms()
+
+    def _refresh_users(self) -> None:
+        current = self._user_combo.currentText()
+        self._user_combo.blockSignals(True)
+        self._user_combo.clear()
+        try:
+            for u in list_proxmoxsession_users(self._proxmox):
+                uid = u.get("userid", "")
+                if uid:
+                    self._user_combo.addItem(uid)
+        except Exception as e:
+            log.warning("Could not list users: %s", e)
+        # Restore previous selection
+        idx = self._user_combo.findText(current)
+        if idx >= 0:
+            self._user_combo.setCurrentIndex(idx)
+        self._user_combo.blockSignals(False)
+        self._on_user_changed()
+
+    def _refresh_pool_vms(self) -> None:
+        """Fetch all VMs/templates from the pool."""
+        try:
+            all_vms = get_vms(self._proxmox, guest_type="both", include_templates=True)
+            # Filter to pool only — check if VM is in proxmoxsession_resources pool
+            pool_vmids = self._get_pool_vmids()
+            self._pool_vms = [v for v in all_vms if v.vmid in pool_vmids]
+        except Exception as e:
+            log.warning("Could not list pool VMs: %s", e)
+            self._pool_vms = []
+        self._refresh_panels()
+
+    def _get_pool_vmids(self) -> set[int]:
+        """Return set of VMIDs that are members of the resource pool."""
+        try:
+            pool_data = self._proxmox.pools(POOL_NAME).get()
+            members = pool_data.get("members", [])
+            return {int(m["vmid"]) for m in members if "vmid" in m}
+        except Exception:
+            return set()
+
+    def _on_user_changed(self) -> None:
+        self._selected_user = self._user_combo.currentText()
+        self._refresh_panels()
+
+    def _refresh_panels(self) -> None:
+        if not self._selected_user:
+            self._pool_list.clear()
+            self._assigned_list.clear()
+            return
+
+        try:
+            assigned_ids = set(list_vmids_for_user(self._proxmox, self._selected_user))
+        except Exception:
+            assigned_ids = set()
+
+        self._pool_list.clear()
+        self._assigned_list.clear()
+
+        for vm in sorted(self._pool_vms, key=lambda v: (not v.is_template, v.name.lower())):
+            tag = " [Template]" if vm.is_template else f" [{vm.status}]"
+            label = f"{vm.name}{tag} (ID {vm.vmid})"
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, vm.vmid)
+            if vm.vmid in assigned_ids:
+                self._assigned_list.addItem(item)
+            else:
+                self._pool_list.addItem(item)
+
+    def _on_assign(self) -> None:
+        item = self._pool_list.currentItem()
+        if not item or not self._selected_user:
+            return
+        vmid = int(item.data(Qt.ItemDataRole.UserRole))
+        try:
+            assign_vm_to_user(self._proxmox, self._selected_user, vmid)
+            self._refresh_panels()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not assign VM:\n{e}")
+
+    def _on_unassign(self) -> None:
+        item = self._assigned_list.currentItem()
+        if not item or not self._selected_user:
+            return
+        vmid = int(item.data(Qt.ItemDataRole.UserRole))
+        try:
+            unassign_vm_from_user(self._proxmox, self._selected_user, vmid)
+            self._refresh_panels()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not unassign VM:\n{e}")
+
+
 # ── Main management window ────────────────────────────────────────────────────
 
 class ManageWindow(QDialog):
@@ -652,6 +819,8 @@ class ManageWindow(QDialog):
         self._tabs.addTab(groups_tab, "Groups")
         users_tab = _UsersTab(self._proxmox, self)
         self._tabs.addTab(users_tab, "Users")
+        assignments_tab = _VMAssignmentsTab(self._proxmox, self)
+        self._tabs.addTab(assignments_tab, "VM Assignments")
 
     def _on_refresh(self) -> None:
         if self._proxmox is None:

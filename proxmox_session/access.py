@@ -1,5 +1,6 @@
 """
-Proxmox access management — groups, users, roles, and ACLs for ProxmoxSession.
+Proxmox access management — groups, users, roles, ACLs, and resource pool
+for ProxmoxSession.
 
 All ProxmoxSession-managed objects use the prefix "proxmoxsession_" for groups
 and "ProxmoxSession." for roles so they can be identified and managed independently
@@ -16,25 +17,31 @@ log = logging.getLogger(__name__)
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 PREFIX = "proxmoxsession_"
+POOL_NAME = "proxmoxsession_resources"
 
 ROLES: dict[str, str] = {
-    "ProxmoxSession.VDIUser": "VM.Console VM.PowerMgmt VM.Audit",
-    "ProxmoxSession.Admin": "VM.Console VM.PowerMgmt VM.Audit VM.Allocate VM.Config.Options",
-    "ProxmoxSession.SuperAdmin": "User.Modify Group.Allocate Permissions.Modify",
+    # Per-VM role for individual user assignments: view, power, SPICE, clone
+    "ProxmoxSession.VDIUser":   "VM.Console VM.PowerMgmt VM.Audit VM.Clone",
+    # Pool-level admin role: full VM management within the resource pool
+    "ProxmoxSession.Admin":     "VM.Console VM.PowerMgmt VM.Audit VM.Allocate VM.Config.Options VM.Clone Pool.Audit",
+    # Superadmin: manage groups/users + view all VMs
+    "ProxmoxSession.SuperAdmin": "User.Modify Group.Allocate Permissions.Modify VM.Audit",
+    # Pool deploy role for VDI users: lets them clone templates into the pool
+    "ProxmoxSession.VDIDeploy": "VM.Allocate Datastore.AllocateSpace",
 }
 
 # Standard groups created by the wizard
 STANDARD_GROUPS: dict[str, dict] = {
     "superadmin": {
-        "comment": "ProxmoxSession superadmin — manages PS groups and users",
+        "comment": "ProxmoxSession superadmin — manages PS groups, users, and VMs",
         "role": "ProxmoxSession.SuperAdmin",
     },
     "admin": {
-        "comment": "ProxmoxSession admin — full VM management",
+        "comment": "ProxmoxSession admin — full VM management in resource pool",
         "role": "ProxmoxSession.Admin",
     },
     "vdiuser": {
-        "comment": "ProxmoxSession VDI user — SPICE connect and power only",
+        "comment": "ProxmoxSession VDI user — SPICE connect and power on assigned VMs",
         "role": "ProxmoxSession.VDIUser",
     },
 }
@@ -68,7 +75,7 @@ def role_name(short_name: str) -> str:
 
 def create_proxmoxsession_roles(proxmox: proxmoxer.ProxmoxAPI) -> list[str]:
     """
-    Create all three ProxmoxSession.* roles. Idempotent — skips existing roles.
+    Create all ProxmoxSession.* roles. Idempotent — skips existing roles.
     Returns list of role IDs that were created.
     """
     created = []
@@ -83,6 +90,34 @@ def create_proxmoxsession_roles(proxmox: proxmoxer.ProxmoxAPI) -> list[str]:
         created.append(roleid)
 
     return created
+
+
+def create_proxmoxsession_pool(proxmox: proxmoxer.ProxmoxAPI) -> bool:
+    """
+    Create the proxmoxsession_resources resource pool. Idempotent.
+    Returns True if created, False if already existed.
+    """
+    try:
+        existing = {p["poolid"] for p in proxmox.pools.get()}
+    except Exception:
+        existing = set()
+
+    if POOL_NAME in existing:
+        log.debug("Pool %s already exists", POOL_NAME)
+        return False
+
+    try:
+        proxmox.pools.post(
+            poolid=POOL_NAME,
+            comment="ProxmoxSession managed VMs and templates",
+        )
+        log.info("Created pool: %s", POOL_NAME)
+        return True
+    except proxmoxer.core.ResourceException as e:
+        if e.status_code == 409:
+            log.debug("Pool %s already exists (409)", POOL_NAME)
+            return False
+        raise
 
 
 def create_proxmoxsession_group(
@@ -112,21 +147,59 @@ def assign_group_permissions(
     vm_path: str = "/vms",
 ) -> None:
     """
-    Assign the appropriate ProxmoxSession role to a group on the given VM path.
-    Also grants the superadmin group management access to this group.
+    Assign the appropriate ProxmoxSession role to a standard group.
+
+    ACL model:
+    - superadmin → /vms (VM.Audit view of all VMs) + /access/groups management
+    - admin       → /pool/proxmoxsession_resources (full management of pool VMs)
+    - vdiuser     → /pool/proxmoxsession_resources (VDIDeploy: allocate for cloning)
+                    individual VM access is granted per-user via assign_vm_to_user()
+
+    Also grants superadmin management access to this group.
     """
     groupid = group_name(short_name)
     group_info = STANDARD_GROUPS.get(short_name)
     assigned_role = group_info["role"] if group_info else "ProxmoxSession.VDIUser"
 
-    # Grant VM access
-    proxmox.access.acl.put(
-        path=vm_path,
-        groups=groupid,
-        roles=assigned_role,
-        propagate=1,
-    )
-    log.info("ACL: %s → %s on %s", groupid, assigned_role, vm_path)
+    if short_name == "superadmin":
+        # SuperAdmin sees all VMs at /vms level (VM.Audit)
+        proxmox.access.acl.put(
+            path="/vms",
+            groups=groupid,
+            roles="ProxmoxSession.SuperAdmin",
+            propagate=1,
+        )
+        log.info("ACL: %s → ProxmoxSession.SuperAdmin on /vms", groupid)
+    elif short_name == "admin":
+        # Admin manages VMs in the resource pool
+        pool_path = f"/pool/{POOL_NAME}"
+        proxmox.access.acl.put(
+            path=pool_path,
+            groups=groupid,
+            roles="ProxmoxSession.Admin",
+            propagate=1,
+        )
+        log.info("ACL: %s → ProxmoxSession.Admin on %s", groupid, pool_path)
+    elif short_name == "vdiuser":
+        # VDIUser group gets deploy (allocate/clone) permission on the pool
+        # Individual VM access is per-user via assign_vm_to_user()
+        pool_path = f"/pool/{POOL_NAME}"
+        proxmox.access.acl.put(
+            path=pool_path,
+            groups=groupid,
+            roles="ProxmoxSession.VDIDeploy",
+            propagate=1,
+        )
+        log.info("ACL: %s → ProxmoxSession.VDIDeploy on %s", groupid, pool_path)
+    else:
+        # Custom group — use vm_path
+        proxmox.access.acl.put(
+            path=vm_path,
+            groups=groupid,
+            roles=assigned_role,
+            propagate=1,
+        )
+        log.info("ACL: %s → %s on %s", groupid, assigned_role, vm_path)
 
     # Grant superadmin management access to this group
     superadmin_groupid = group_name("superadmin")
@@ -203,6 +276,73 @@ def create_user(
     return userid
 
 
+# ── Per-user VM assignment ────────────────────────────────────────────────────
+
+def assign_vm_to_user(
+    proxmox: proxmoxer.ProxmoxAPI,
+    userid: str,
+    vmid: int,
+) -> None:
+    """
+    Grant a specific user access to a single VM or template via ACL.
+    The user gets ProxmoxSession.VDIUser role on /vms/<vmid>.
+    """
+    if is_protected(userid):
+        raise ValueError(f"Cannot assign VMs to protected user: {userid}")
+    path = f"/vms/{vmid}"
+    proxmox.access.acl.put(
+        path=path,
+        users=userid,
+        roles="ProxmoxSession.VDIUser",
+        propagate=1,
+    )
+    log.info("ACL: %s → ProxmoxSession.VDIUser on %s", userid, path)
+
+
+def unassign_vm_from_user(
+    proxmox: proxmoxer.ProxmoxAPI,
+    userid: str,
+    vmid: int,
+) -> None:
+    """
+    Remove a user's ACL on a specific VM.
+    """
+    if is_protected(userid):
+        return
+    path = f"/vms/{vmid}"
+    try:
+        proxmox.access.acl.put(
+            path=path,
+            users=userid,
+            roles="ProxmoxSession.VDIUser",
+            propagate=1,
+            delete=1,
+        )
+        log.info("Removed ACL: %s on %s", userid, path)
+    except Exception as e:
+        log.warning("Could not remove ACL for %s on %s: %s", userid, path, e)
+
+
+def list_vmids_for_user(proxmox: proxmoxer.ProxmoxAPI, userid: str) -> list[int]:
+    """
+    Return list of VMIDs that have a direct ACL entry for this user
+    (i.e. VMs explicitly assigned to them).
+    """
+    vmids = []
+    try:
+        for entry in proxmox.access.acl.get():
+            if entry.get("ugid") == userid and entry.get("type") == "user":
+                path = entry.get("path", "")
+                if path.startswith("/vms/"):
+                    try:
+                        vmids.append(int(path.split("/")[-1]))
+                    except ValueError:
+                        pass
+    except Exception as e:
+        log.warning("Could not list ACLs for user %s: %s", userid, e)
+    return vmids
+
+
 # ── Listing helpers ───────────────────────────────────────────────────────────
 
 def list_proxmoxsession_groups(proxmox: proxmoxer.ProxmoxAPI) -> list[dict]:
@@ -251,7 +391,7 @@ def run_full_setup(
     Execute the full wizard setup. Returns a results dict with created/failed lists.
 
     groups_to_create: list of dicts with keys: short_name, comment, role (VDIUser/Admin/SuperAdmin)
-    vm_path: e.g. '/vms' or '/pool/mypool'
+    vm_path: e.g. '/vms' or '/pool/mypool' (used for custom groups only)
     extra_users: list of dicts with keys: username, password, short_group, realm, email,
                  firstname, lastname
     """
@@ -276,7 +416,15 @@ def run_full_setup(
         record("failed", "Roles", str(e))
         return results  # Can't proceed without roles
 
-    # 2. Always ensure superadmin group exists first
+    # 2. Resource pool
+    try:
+        new_pool = create_proxmoxsession_pool(proxmox)
+        record("created" if new_pool else "skipped", f"Pool: {POOL_NAME}")
+    except Exception as e:
+        record("failed", f"Pool: {POOL_NAME}", str(e))
+        # Non-fatal — continue
+
+    # 3. Always ensure standard groups exist first
     for short_name, info in STANDARD_GROUPS.items():
         try:
             new = create_proxmoxsession_group(proxmox, short_name, info["comment"])
@@ -284,7 +432,7 @@ def run_full_setup(
         except Exception as e:
             record("failed", f"Group: {group_name(short_name)}", str(e))
 
-    # 3. Custom groups
+    # 4. Custom groups
     for g in groups_to_create:
         short = g["short_name"]
         if short in STANDARD_GROUPS:
@@ -295,15 +443,20 @@ def run_full_setup(
         except Exception as e:
             record("failed", f"Group: {group_name(short)}", str(e))
 
-    # 4. ACL assignments — standard groups
+    # 5. ACL assignments — standard groups (use pool-aware logic)
     for short_name in STANDARD_GROUPS:
         try:
             assign_group_permissions(proxmox, short_name, vm_path)
-            record("created", f"ACL: {group_name(short_name)} on {vm_path}")
+            if short_name == "superadmin":
+                record("created", f"ACL: {group_name(short_name)} → view all VMs")
+            elif short_name == "admin":
+                record("created", f"ACL: {group_name(short_name)} → manage /pool/{POOL_NAME}")
+            else:
+                record("created", f"ACL: {group_name(short_name)} → deploy into /pool/{POOL_NAME}")
         except Exception as e:
             record("failed", f"ACL: {group_name(short_name)}", str(e))
 
-    # 5. ACL assignments — custom groups
+    # 6. ACL assignments — custom groups (use vm_path)
     for g in groups_to_create:
         short = g["short_name"]
         if short in STANDARD_GROUPS:
@@ -314,7 +467,7 @@ def run_full_setup(
         except Exception as e:
             record("failed", f"ACL: {group_name(short)}", str(e))
 
-    # 6. SuperAdmin user
+    # 7. SuperAdmin user
     try:
         uid = create_user(
             proxmox,
@@ -335,7 +488,7 @@ def run_full_setup(
     except Exception as e:
         record("failed", f"User: {superadmin_username}@{superadmin_realm}", str(e))
 
-    # 7. Extra VDI users
+    # 8. Extra VDI users
     for u in (extra_users or []):
         try:
             uid = create_user(
