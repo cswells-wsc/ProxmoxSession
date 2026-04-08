@@ -3,7 +3,9 @@ VM list window — shows all accessible VMs with status badges, search filter,
 Connect / Reset buttons, and 5-second auto-refresh via QTimer.
 """
 
+import json
 import logging
+import os
 import sys
 from typing import Optional
 
@@ -26,9 +28,36 @@ from ..api import ProxmoxAPIError, VMInfo, get_spice_config, get_vms, start_vm, 
 from ..config import AppConfig
 from ..spice import build_spice_ini, get_vv_path_for_debug, launch_viewer
 from ..utils.system import find_remote_viewer
-from .dialogs import ask_yes_no, show_error, show_info
+from .dialogs import ConnectDialog, ask_yes_no, show_error, show_info
 
 log = logging.getLogger(__name__)
+
+
+def _prefs_path() -> str:
+    if sys.platform == "win32":
+        base = os.path.join(os.getenv("APPDATA", ""), "VDIClient")
+    else:
+        base = os.path.expanduser("~/.local/share/VDIClient")
+    return os.path.join(base, "connection_prefs.json")
+
+
+def _load_prefs() -> dict:
+    path = _prefs_path()
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_prefs(prefs: dict) -> None:
+    path = _prefs_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(prefs, fh, indent=2)
+    except OSError as e:
+        log.warning("Could not save connection prefs: %s", e)
 
 
 # Status → display label + badge color
@@ -75,6 +104,7 @@ class VMListWindow(QMainWindow):
         self.hostset = hostset
         self._vms: list[VMInfo] = []
         self._vvcmd: Optional[str] = None
+        self._prefs: dict = _load_prefs()
 
         self.setWindowTitle(config.title)
 
@@ -214,6 +244,16 @@ class VMListWindow(QMainWindow):
             show_error(self, "remote-viewer not found. Install virt-viewer.")
             return
 
+        # Pre-connection dialog — USB redirection opt-in
+        vm_prefs = self._prefs.get(str(vm.vmid), {})
+        dlg = ConnectDialog(self, vm_name=vm.name, usb_default=vm_prefs.get("usb", False))
+        if dlg.exec() != ConnectDialog.DialogCode.Accepted:
+            return
+
+        # Save USB preference for this VM
+        self._prefs[str(vm.vmid)] = {"usb": dlg.usb_enabled}
+        _save_prefs(self._prefs)
+
         # Start VM if stopped
         if vm.status != "running":
             if not self._start_and_wait(vm):
@@ -228,10 +268,15 @@ class VMListWindow(QMainWindow):
         safe_data = {k: ("***" if k == "password" else v) for k, v in spice_data.items()}
         log.debug("SPICE config received from Proxmox for VM %s: %s", vm.vmid, safe_data)
 
+        addl = dict(self.config.addl_params or {})
+        if dlg.usb_enabled:
+            addl.setdefault("enable-usbredir", "true")
+            addl.setdefault("enable-usb-autoshare", "true")
+
         ini = build_spice_ini(
             spice_data,
             self.config.spiceproxy_conv,
-            self.config.addl_params,
+            addl,
         )
 
         import re
