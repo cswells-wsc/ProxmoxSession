@@ -50,6 +50,20 @@ from ..config import HostConfig
 log = logging.getLogger(__name__)
 
 
+def _as_list(val) -> list[str]:
+    """
+    Normalize Proxmox API fields that return either a list or a comma-separated
+    string depending on which endpoint is called.
+    e.g. groups(gid).get()['members'] → list
+         users.get(full=1)[n]['groups'] → comma-separated string
+    """
+    if not val:
+        return []
+    if isinstance(val, list):
+        return [str(v).strip() for v in val if str(v).strip()]
+    return [v.strip() for v in str(val).split(",") if v.strip()]
+
+
 # ── Login dialog ──────────────────────────────────────────────────────────────
 
 class _LoginDialog(QDialog):
@@ -153,7 +167,7 @@ class _LoginDialog(QDialog):
             users = px.access.users.get(full=1)
             user_data = next((u for u in users if u.get("userid") == uid), None)
             if user_data:
-                groups = set(user_data.get("groups", "").split(",")) if user_data.get("groups") else set()
+                groups = set(_as_list(user_data.get("groups")))
                 if superadmin_gid not in groups:
                     self._status.setText("This user is not a member of proxmoxsession_superadmin.")
                     if self._ok_btn:
@@ -250,12 +264,9 @@ class _GroupsTab(QWidget):
         self._members_list.clear()
         try:
             group_data = self._proxmox.access.groups(gid).get()
-            members_str = group_data.get("members", "")
-            if members_str:
-                for uid in members_str.split(","):
-                    uid = uid.strip()
-                    if uid and not is_protected(uid):
-                        self._members_list.addItem(uid)
+            for uid in _as_list(group_data.get("members")):
+                if not is_protected(uid):
+                    self._members_list.addItem(uid)
         except Exception as e:
             log.warning("Could not load members for %s: %s", gid, e)
 
@@ -348,10 +359,8 @@ class _GroupsTab(QWidget):
         if not ok or not uid:
             return
         try:
-            # Add user to group by updating their groups list
             user_data = self._proxmox.access.users(uid).get()
-            existing_groups = user_data.get("groups", "")
-            existing_list = [g.strip() for g in existing_groups.split(",") if g.strip()] if existing_groups else []
+            existing_list = _as_list(user_data.get("groups"))
             if gid not in existing_list:
                 existing_list.append(gid)
             self._proxmox.access.users(uid).put(groups=",".join(existing_list))
@@ -369,8 +378,7 @@ class _GroupsTab(QWidget):
         uid = item.text()
         try:
             user_data = self._proxmox.access.users(uid).get()
-            existing_groups = user_data.get("groups", "")
-            existing_list = [g.strip() for g in existing_groups.split(",") if g.strip()] if existing_groups else []
+            existing_list = _as_list(user_data.get("groups"))
             if gid in existing_list:
                 existing_list.remove(gid)
             self._proxmox.access.users(uid).put(groups=",".join(existing_list))
@@ -419,7 +427,7 @@ class _UsersTab(QWidget):
         try:
             for u in list_proxmoxsession_users(self._proxmox):
                 uid = u.get("userid", "")
-                groups = u.get("groups", "")
+                groups = ", ".join(_as_list(u.get("groups")))
                 item = QListWidgetItem(f"{uid}   [{groups}]")
                 item.setData(Qt.ItemDataRole.UserRole, uid)
                 self._user_list.addItem(item)
@@ -678,9 +686,17 @@ class _VMAssignmentsTab(QWidget):
 
     def _refresh_pool_vms(self) -> None:
         """Fetch all VMs/templates from the pool."""
+        if not self._pool_exists():
+            self._pool_vms = []
+            self._pool_list.clear()
+            self._pool_list.addItem(
+                f"Pool '{POOL_NAME}' does not exist yet. "
+                "Run the Setup Wizard or Check & Repair to create it."
+            )
+            self._refresh_panels()
+            return
         try:
             all_vms = get_vms(self._proxmox, guest_type="both", include_templates=True)
-            # Filter to pool only — check if VM is in proxmoxsession_resources pool
             pool_vmids = self._get_pool_vmids()
             self._pool_vms = [v for v in all_vms if v.vmid in pool_vmids]
         except Exception as e:
@@ -694,8 +710,16 @@ class _VMAssignmentsTab(QWidget):
             pool_data = self._proxmox.pools(POOL_NAME).get()
             members = pool_data.get("members", [])
             return {int(m["vmid"]) for m in members if "vmid" in m}
-        except Exception:
+        except Exception as e:
+            log.warning("Could not read pool %s (may not exist yet): %s", POOL_NAME, e)
             return set()
+
+    def _pool_exists(self) -> bool:
+        try:
+            pools = {p["poolid"] for p in self._proxmox.pools.get()}
+            return POOL_NAME in pools
+        except Exception:
+            return False
 
     def _on_user_changed(self) -> None:
         self._selected_user = self._user_combo.currentText()

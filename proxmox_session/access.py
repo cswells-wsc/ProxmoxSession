@@ -382,7 +382,13 @@ def list_proxmoxsession_users(proxmox: proxmoxer.ProxmoxAPI) -> list[dict]:
         userid = user.get("userid", "")
         if is_protected(userid):
             continue
-        user_groups = set(user.get("groups", "").split(",")) if user.get("groups") else set()
+        raw_groups = user.get("groups")
+        if isinstance(raw_groups, list):
+            user_groups = set(raw_groups)
+        elif raw_groups:
+            user_groups = set(g.strip() for g in raw_groups.split(",") if g.strip())
+        else:
+            user_groups = set()
         if user_groups & ps_groups:
             result.append(user)
     return result
