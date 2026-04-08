@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..access import POOL_NAME
+from ..access import POOL_NAME, assign_vm_to_user
 from ..api import (
     ProxmoxAPIError,
     VMInfo,
@@ -143,12 +143,14 @@ class VMListWindow(QMainWindow):
         config: AppConfig,
         proxmox: proxmoxer.ProxmoxAPI,
         hostset: str,
+        current_userid: str = "",
         parent: Optional[QWidget] = None,
     ):
         super().__init__(parent)
         self.config = config
         self.proxmox = proxmox
         self.hostset = hostset
+        self._current_userid = current_userid
         self._vms: list[VMInfo] = []
         self._vvcmd: Optional[str] = None
         self._prefs: dict = _load_prefs()
@@ -459,13 +461,28 @@ class VMListWindow(QMainWindow):
         )
 
     def _on_clone_done(self, new_vmid: int, new_name: str) -> None:
-        show_info(
-            self,
-            f"VM '{new_name}' (ID {new_vmid}) has been created in the "
-            f"proxmoxsession_resources pool.\n\n"
-            "An administrator may need to assign it to your account before you can connect.",
-            title="Deploy Complete",
-        )
+        # Auto-assign the new VM to the user who deployed it
+        if self._current_userid:
+            try:
+                assign_vm_to_user(self.proxmox, self._current_userid, new_vmid)
+                log.info("Auto-assigned VM %s to %s after deploy", new_vmid, self._current_userid)
+                msg = (
+                    f"VM '{new_name}' (ID {new_vmid}) has been created and assigned to your account.\n\n"
+                    "It will appear in your VM list once the server finishes provisioning it."
+                )
+            except Exception as e:
+                log.warning("Could not auto-assign VM %s to %s: %s", new_vmid, self._current_userid, e)
+                msg = (
+                    f"VM '{new_name}' (ID {new_vmid}) was created in the proxmoxsession_resources pool,\n"
+                    f"but could not be automatically assigned to your account:\n{e}\n\n"
+                    "Ask an administrator to assign it."
+                )
+        else:
+            msg = (
+                f"VM '{new_name}' (ID {new_vmid}) has been created in the "
+                f"proxmoxsession_resources pool."
+            )
+        show_info(self, msg, title="Deploy Complete")
         self._refresh_vms()
 
     # ── Helpers ───────────────────────────────────────────────────────────────

@@ -42,6 +42,7 @@ class LoginWindow(QDialog):
         super().__init__(parent)
         self.config = config
         self.proxmox = None
+        self.userid = ""          # set on successful login: "username@realm"
         self.current_hostset = config.current_hostset
 
         self.setWindowTitle(config.title)
@@ -154,6 +155,8 @@ class LoginWindow(QDialog):
 
         if result.success:
             self.proxmox = result.proxmox
+            host = self.config.hosts[self.current_hostset]
+            self.userid = f"{username}@{host.backend}"
             self.accept()
         elif result.connected and not result.success:
             show_error(self, "Invalid username and/or password, please try again.")

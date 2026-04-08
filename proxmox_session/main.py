@@ -115,6 +115,7 @@ def main() -> int:
                 return 1
             proxmox = result.proxmox
             hostset = config.current_hostset
+            current_userid = host.user  # already in user@realm format for token auth
         else:
             result_code = login.exec()
             if result_code == LoginWindow.ClusterChanged:
@@ -125,6 +126,7 @@ def main() -> int:
                 return 0
             proxmox = login.proxmox
             hostset = login.current_hostset
+            current_userid = login.userid
 
         # Handle auto_vmid: connect directly without showing the VM list
         auto_id = config.hosts[hostset].auto_vmid
@@ -152,7 +154,7 @@ def main() -> int:
                 _se(None, str(e))
             return 0
 
-        vm_window = VMListWindow(config, proxmox, hostset)
+        vm_window = VMListWindow(config, proxmox, hostset, current_userid=current_userid)
         vm_window.show()
 
         # logged_out signal brings us back to the login loop

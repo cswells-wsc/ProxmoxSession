@@ -170,6 +170,15 @@ def assign_group_permissions(
             propagate=1,
         )
         log.info("ACL: %s → ProxmoxSession.SuperAdmin on /vms", groupid)
+        # SuperAdmin needs User.Modify on /access to create users
+        # (group-scoped ACLs alone only allow modifying existing group membership)
+        proxmox.access.acl.put(
+            path="/access",
+            groups=groupid,
+            roles="ProxmoxSession.SuperAdmin",
+            propagate=0,
+        )
+        log.info("ACL: %s → ProxmoxSession.SuperAdmin on /access (user creation)", groupid)
     elif short_name == "admin":
         # Admin manages VMs in the resource pool
         pool_path = f"/pool/{POOL_NAME}"

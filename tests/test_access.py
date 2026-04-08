@@ -161,6 +161,13 @@ class TestAssignGroupPermissions(unittest.TestCase):
         self.assertIn(f"/pool/{POOL_NAME}", first.kwargs["path"])
         self.assertEqual(first.kwargs["roles"], "ProxmoxSession.VDIDeploy")
 
+    def test_superadmin_gets_access_path_for_user_creation(self):
+        """Superadmin needs /access ACL so User.Modify allows creating new users."""
+        px = _make_proxmox()
+        assign_group_permissions(px, "superadmin", "/vms")
+        paths = [c.kwargs["path"] for c in px.access.acl.put.call_args_list]
+        self.assertIn("/access", paths, "Expected /access ACL for superadmin (user creation)")
+
     def test_superadmin_management_acl_always_granted(self):
         """Every group gets a superadmin management ACL on /access/groups/<gid>."""
         px = _make_proxmox()
