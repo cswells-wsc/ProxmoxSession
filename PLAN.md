@@ -21,13 +21,16 @@ ProxmoxSession/
 │   ├── auth.py              # Proxmox authentication (user/pass, API token, TOTP)
 │   ├── api.py               # Proxmox API helpers (VM list, start/stop, SPICE ticket)
 │   ├── spice.py             # SPICE .vv file building, DNS resolution, remote-viewer launch
+│   ├── access.py            # Proxmox API helpers: groups/roles/ACLs/users
 │   ├── ui/
 │   │   ├── __init__.py
 │   │   ├── app.py           # QApplication wrapper, QSS dark/light themes
 │   │   ├── login_window.py  # Login screen (cluster selector, TOTP, auto-login)
 │   │   ├── vm_list_window.py# VM list with search, status badges, auto-refresh
 │   │   ├── config_window.py # GUI config editor (tabbed, one tab per host)
-│   │   └── dialogs.py       # Dialogs: error, info, confirm, ConnectDialog
+│   │   ├── dialogs.py       # Dialogs: error, info, confirm, ConnectDialog
+│   │   ├── setup_wizard.py  # 7-page QWizard: first-time Proxmox setup
+│   │   └── manage_window.py # Superadmin management: groups and users
 │   └── utils/
 │       ├── __init__.py
 │       └── system.py        # remote-viewer detection (ftype on Windows, which on Linux)
@@ -41,12 +44,14 @@ ProxmoxSession/
 │   ├── proxmox-session-config.desktop   # Config editor menu shortcut (runs via pkexec)
 │   └── proxmox-session-config-admin.sh  # pkexec elevation wrapper for config editor
 ├── tests/
-│   └── test_spice_vv.py     # 17-test suite for .vv file build/write/cleanup flow
+│   ├── test_spice_vv.py     # 17-test suite for .vv file build/write/cleanup flow
+│   └── test_access.py       # 26-test suite for access.py helpers (mocked API)
 ├── docs/
 │   ├── index.md
 │   ├── installation.md
 │   ├── configuration.md
 │   ├── usb-redirection.md
+│   ├── setup-wizard.md
 │   ├── management.md
 │   └── troubleshooting.md
 ├── requirements.txt
@@ -100,6 +105,8 @@ ProxmoxSession/
 | Git repo / one-line install | ❌ | ✅ | github.com/cswells-wsc/ProxmoxSession |
 | Security hardening | ❌ | ✅ | Credential redaction, file permissions, no shell injection |
 | INI backward-compatibility | — | ✅ | Existing vdiclient.ini files work unchanged |
+| Proxmox Setup Wizard | ❌ | ✅ | 7-page wizard; groups/roles/ACLs/users; launched from Host tab |
+| Superadmin Manage window | ❌ | ✅ | Groups + Users tabs; scoped to proxmoxsession_* only |
 | TOTP countdown timer | ❌ | ❌ | Not yet implemented |
 | Multi-monitor / display selector | ❌ | ❌ | Not yet implemented |
 | Connection profiles (last VM per user) | ❌ | ❌ | Not yet implemented |

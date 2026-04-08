@@ -18,6 +18,8 @@ Based on [PVE-VDIClient](https://github.com/joshpatten/PVE-VDIClient), rewritten
 - Per-session USB redirection toggle (remembered per VM)
 - Dark / light / system themes (QSS)
 - GUI config editor with one tab per host cluster (requires elevation on Linux)
+- **Proxmox Setup Wizard** — first-time setup of groups, roles, and users via GUI (launched from config editor)
+- **Superadmin Manage window** — add/remove users and groups after setup (scoped to ProxmoxSession accounts only)
 - API token auto-login
 - TOTP / OTP support
 - Kiosk mode (Linux only)
@@ -135,7 +137,10 @@ proxmox_session/       # Python package
 ├── auth.py            # Proxmox authentication
 ├── api.py             # API helpers (VM list, SPICE ticket)
 ├── spice.py           # .vv file builder + remote-viewer launcher
+├── access.py          # Proxmox groups/roles/ACLs/users API helpers
 ├── ui/                # PyQt6 windows and dialogs
+│   ├── setup_wizard.py    # 7-page first-time setup wizard
+│   └── manage_window.py   # Superadmin groups & users manager
 └── utils/             # remote-viewer detection
 
 install/
@@ -158,6 +163,7 @@ tests/                 # Test suite
 
 - [Installation](docs/installation.md)
 - [Configuration](docs/configuration.md)
+- [Setup Wizard](docs/setup-wizard.md)
 - [USB Redirection](docs/usb-redirection.md)
 - [Management](docs/management.md)
 - [Troubleshooting](docs/troubleshooting.md)

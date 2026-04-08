@@ -418,12 +418,67 @@ class HostTab(QWidget):
         opts_form.addRow("Port Knock Sequence (JSON):", self._knock)
 
         layout.addWidget(opts_box)
+
+        # ── ProxmoxSession Setup ──
+        setup_box = QGroupBox("ProxmoxSession Server Setup")
+        setup_layout = QVBoxLayout(setup_box)
+        setup_desc = QLabel(
+            "Run the setup wizard once to create ProxmoxSession groups, roles, and users on this "
+            "Proxmox server. After the wizard runs, use Manage to add/remove users and groups."
+        )
+        setup_desc.setWordWrap(True)
+        setup_layout.addWidget(setup_desc)
+
+        setup_btns = QHBoxLayout()
+        wizard_btn = QPushButton("Run Setup Wizard…")
+        wizard_btn.setToolTip("First-time setup: create ProxmoxSession groups, roles, and users")
+        wizard_btn.clicked.connect(self._on_run_wizard)
+        manage_btn = QPushButton("Manage Groups & Users…")
+        manage_btn.setToolTip("Add/remove users and groups (requires superadmin login)")
+        manage_btn.clicked.connect(self._on_manage)
+        setup_btns.addWidget(wizard_btn)
+        setup_btns.addWidget(manage_btn)
+        setup_btns.addStretch()
+        setup_layout.addLayout(setup_btns)
+        layout.addWidget(setup_box)
+
         layout.addStretch()
+
+        # Store name for use in wizard/manage callbacks
+        self._raw_ref = raw
 
         scroll.setWidget(inner)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(scroll)
+
+    def _build_host_config(self):
+        """Build a HostConfig from the current tab state (without saving to INI)."""
+        from ..config import HostConfig
+        entries = self._hostpool.get_entries()
+        return HostConfig(
+            hostpool=entries,
+            backend=self._backend.currentText(),
+            verify_ssl=self._tls.isChecked(),
+        )
+
+    def _on_run_wizard(self) -> None:
+        from .setup_wizard import SetupWizard
+        host_config = self._build_host_config()
+        if not host_config.hostpool:
+            QMessageBox.warning(self, "No Hosts", "Add at least one host before running the wizard.")
+            return
+        wiz = SetupWizard(host_config, self.get_name(), parent=self)
+        wiz.exec()
+
+    def _on_manage(self) -> None:
+        from .manage_window import ManageWindow
+        host_config = self._build_host_config()
+        if not host_config.hostpool:
+            QMessageBox.warning(self, "No Hosts", "Add at least one host before managing users.")
+            return
+        win = ManageWindow(host_config, parent=self)
+        win.exec()
 
     def get_name(self) -> str:
         return self._name.text().strip()
