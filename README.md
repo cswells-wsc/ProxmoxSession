@@ -13,15 +13,16 @@ Based on [PVE-VDIClient](https://github.com/joshpatten/PVE-VDIClient), rewritten
 
 - Multi-cluster support with per-cluster authentication settings
 - SPICE sessions via `remote-viewer` (temp `.vv` file — reliable on both Windows and Linux)
-- SpiceProxy redirect — rewrite unresolvable node FQDNs to IPs
-- Auto DNS resolution of proxy hostnames
+- SpiceProxy redirect — rewrite unresolvable node FQDNs to IPs with auto DNS resolution
 - VM search/filter, color-coded status badges, 5-second auto-refresh
+- Per-session USB redirection toggle (remembered per VM)
 - Dark / light / system themes (QSS)
-- GUI config editor with one tab per host cluster
+- GUI config editor with one tab per host cluster (requires elevation on Linux)
 - API token auto-login
 - TOTP / OTP support
 - Kiosk mode (Linux only)
-- File logging to `%APPDATA%\VDIClient\proxmox_session.log` (Windows) or `~/.local/share/VDIClient/` (Linux)
+- File logging (`%APPDATA%\VDIClient\proxmox_session.log` on Windows, `~/.local/share/VDIClient/` on Linux)
+- Security hardened — credentials redacted from logs, config files restricted to owner (0600 on Linux)
 
 ---
 
@@ -52,21 +53,25 @@ install\install.bat --check
 
 ## Linux — Quick Start
 
-**Requirements:** Python 3.10+, `python3-pyqt6`, `virt-viewer`, `openbox`
+**One-line install on Debian/Ubuntu:**
 
 ```bash
-git clone https://github.com/cswells-wsc/ProxmoxSession.git
-cd ProxmoxSession
-sudo ./install/install.sh
+sudo apt install -y git && sudo git clone https://github.com/cswells-wsc/ProxmoxSession.git /opt/ProxmoxSession && sudo bash /opt/ProxmoxSession/install/install.sh
 ```
 
 The installer will:
 1. Install system dependencies (`apt`/`dnf`)
 2. Install the Python package
 3. Register `proxmox-session.desktop` in `/usr/share/xsessions/`
-4. Copy `vdiclient.ini.example` → `/etc/vdiclient/vdiclient.ini`
+4. Install app menu shortcuts in `/usr/share/applications/`
+5. Copy `vdiclient.ini.example` → `/etc/vdiclient/vdiclient.ini` (permissions: 0600)
 
 Edit `/etc/vdiclient/vdiclient.ini`, log out, and select **Proxmox VDI Session** at the login screen.
+
+**To update:**
+```bash
+cd /opt/ProxmoxSession && sudo git pull && sudo bash install/install.sh
+```
 
 ---
 
@@ -92,7 +97,7 @@ hostpool = {
     "192.168.1.50" : 8006
 }
 auth_backend = pve
-tls_verify = false
+tls_verify = true
 ```
 
 **If your SPICE proxy uses a hostname that doesn't resolve on the client**, add a redirect:
@@ -134,11 +139,14 @@ proxmox_session/       # Python package
 └── utils/             # remote-viewer detection
 
 install/
-├── install.bat        # Windows installer
-├── check.py           # Windows health checker (--check)
-├── install.sh         # Linux system installer
-├── proxmox-session.desktop   # X session definition
-└── proxmox-session.sh        # Session launcher script
+├── install.bat                     # Windows installer
+├── check.py                        # Windows health checker (--check)
+├── install.sh                      # Linux system installer
+├── proxmox-session.desktop         # X session definition
+├── proxmox-session.sh              # Session launcher script
+├── proxmox-session-app.desktop     # Linux app menu shortcut
+├── proxmox-session-config.desktop  # Linux config editor shortcut (pkexec)
+└── proxmox-session-config-admin.sh # Elevation wrapper for config editor
 
 docs/                  # Full documentation
 tests/                 # Test suite
@@ -150,5 +158,6 @@ tests/                 # Test suite
 
 - [Installation](docs/installation.md)
 - [Configuration](docs/configuration.md)
+- [USB Redirection](docs/usb-redirection.md)
 - [Management](docs/management.md)
 - [Troubleshooting](docs/troubleshooting.md)
