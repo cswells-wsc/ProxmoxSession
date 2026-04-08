@@ -32,11 +32,14 @@ ProxmoxSession/
 │       ├── __init__.py
 │       └── system.py        # remote-viewer detection (ftype on Windows, which on Linux)
 ├── install/
-│   ├── install.bat          # Windows: pip install, virt-viewer, shortcuts, config
-│   ├── check.py             # Windows: health check (install.bat --check)
-│   ├── install.sh           # Linux: system install (package + session files)
-│   ├── proxmox-session.desktop  # X session definition → /usr/share/xsessions/
-│   └── proxmox-session.sh   # Session launcher (openbox + python -m proxmox_session)
+│   ├── install.bat                      # Windows: pip install, virt-viewer, shortcuts, config
+│   ├── check.py                         # Windows: health check (install.bat --check)
+│   ├── install.sh                       # Linux: system install (package + session files)
+│   ├── proxmox-session.desktop          # X session definition → /usr/share/xsessions/
+│   ├── proxmox-session.sh               # Session launcher (openbox + python -m proxmox_session)
+│   ├── proxmox-session-app.desktop      # App menu shortcut → /usr/share/applications/
+│   ├── proxmox-session-config.desktop   # Config editor menu shortcut (runs via pkexec)
+│   └── proxmox-session-config-admin.sh  # pkexec elevation wrapper for config editor
 ├── tests/
 │   └── test_spice_vv.py     # 17-test suite for .vv file build/write/cleanup flow
 ├── docs/
@@ -78,24 +81,28 @@ ProxmoxSession/
 | Proxmox auth — user/pass | ✅ | ✅ | Tested |
 | Proxmox auth — API token | ✅ | ✅ | Auto-login when all 3 token fields set |
 | Proxmox auth — TOTP | ✅ | ✅ | Basic OTP field at login |
-| Multiple cluster support | ✅ | ✅ | Tab per cluster in config editor |
-| SPICE via remote-viewer | ✅ | ✅ | Temp .vv file (stdin unreliable on Windows) |
+| Multiple cluster support | ✅ | ✅ | Tab per cluster in config editor; dropdown shown when >1 cluster |
+| SPICE via remote-viewer | ✅ | ✅ | Temp .vv file (stdin unreliable on Windows) — tested on both platforms |
 | SpiceProxy redirect | ✅ | ✅ | GUI editor + auto DNS→IP resolution |
 | pvespiceproxy: token support | ✅ | ✅ | Token passed through unchanged (not resolved) |
 | Kiosk mode | ✅ | ✅ | Linux only (Windows always shows title bar) |
-| Linux session type (.desktop) | ❌ | ✅ | Written; not yet tested on Linux |
+| Linux session type (.desktop) | ❌ | ✅ | Tested on Debian 13 — network wait added for early boot |
+| Linux app menu shortcuts | ❌ | ✅ | ProxmoxSession + ProxmoxSession Config in app menu |
+| Linux config editor elevation | ❌ | ✅ | pkexec prompt; fallback on PermissionError |
 | Windows installer | ❌ | ✅ | install.bat — tested and working |
 | Install health check | ❌ | ✅ | install.bat --check |
-| GUI config editor | ❌ | ✅ | Tabbed; Start Menu shortcut installed |
+| GUI config editor | ❌ | ✅ | Tabbed; Start Menu / app menu shortcuts installed |
 | PyQt6 modern UI | ❌ | ✅ | Dark/light/system themes |
 | VM search/filter | ❌ | ✅ | Real-time filter by name or VMID |
 | VM status color badges | ❌ | ✅ | Running/Stopped/Suspended/Paused |
 | Auto-refresh VM list | ❌ | ✅ | 5-second QTimer |
 | Auto-reconnect after session | ❌ | ✅ | Returns to VM list after viewer exits |
-| INI debug mode | ❌ | ✅ | Shows .vv contents before launch |
-| File logging | ❌ | ✅ | %APPDATA%\VDIClient\proxmox_session.log |
+| INI debug mode | ❌ | ✅ | Shows .vv contents before launch (password redacted in logs) |
+| File logging | ❌ | ✅ | %APPDATA%\VDIClient\ (Win) / ~/.local/share/VDIClient/ (Linux); 0600 on Linux |
 | Dark/light mode (QSS) | ❌ | ✅ | Catppuccin-inspired themes |
 | INI backward-compatibility | — | ✅ | Existing vdiclient.ini files work unchanged |
+| Git repo / one-line install | ❌ | ✅ | github.com/cswells-wsc/ProxmoxSession |
+| Security hardening | ❌ | ✅ | Credential redaction, file permissions, no shell injection |
 | TOTP countdown timer | ❌ | ❌ | Not yet implemented |
 | USB redirection (per-session toggle) | ❌ | ❌ | Workaround: AdditionalParameters in config |
 | Multi-monitor / display selector | ❌ | ❌ | Not yet implemented |
@@ -105,14 +112,10 @@ ProxmoxSession/
 
 ## Remaining Work
 
-### Not Yet Implemented
-1. **TOTP countdown timer** — show a live 30-second countdown next to the OTP field in the login screen so users know when to request a new code
-2. **USB redirection toggle** — per-connection checkbox dialog before launching remote-viewer (currently USB must be enabled globally via `[AdditionalParameters]` in config)
+1. **TOTP countdown timer** — show a live 30-second countdown next to the OTP field so users know when their code expires
+2. **USB redirection toggle** — per-connection checkbox before launching remote-viewer (currently requires editing `[AdditionalParameters]` in config)
 3. **Multi-monitor / display selector** — let the user pick which monitor to use in fullscreen before connecting
 4. **Connection profiles** — remember the last connected VMID per username so repeat users skip the VM list
-
-### Not Yet Tested on Linux
-5. **Linux session type** — `install/proxmox-session.desktop`, `install/proxmox-session.sh`, and `install/install.sh` are written but the full session type flow (GDM → openbox → app) has not been tested on a real Linux machine
 
 ---
 
@@ -132,7 +135,7 @@ node-fqdn.domain.com:3128 = 192.168.1.x:3128
 
 ---
 
-## Windows Session — Quick Start
+## Windows — Quick Start
 
 ```
 install\install.bat          # first-time install
@@ -145,13 +148,17 @@ Log file: `%APPDATA%\VDIClient\proxmox_session.log`
 
 ---
 
-## Linux Session Type — Quick Start
+## Linux — Quick Start
 
 ```bash
-sudo ./install/install.sh
-sudo cp vdiclient.ini.example /etc/vdiclient/vdiclient.ini
+sudo apt install -y git && sudo git clone https://github.com/cswells-wsc/ProxmoxSession.git /opt/ProxmoxSession && sudo bash /opt/ProxmoxSession/install/install.sh
 sudo nano /etc/vdiclient/vdiclient.ini
 # Log out → select "Proxmox VDI Session" at login screen
+```
+
+To update:
+```bash
+cd /opt/ProxmoxSession && sudo git pull && sudo bash install/install.sh
 ```
 
 Config locations (checked in order):
