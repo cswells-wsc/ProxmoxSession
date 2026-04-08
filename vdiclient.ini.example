@@ -32,7 +32,12 @@ hostpool = {
                "10.10.10.100" : 8006,
                "pve1.example.com" : 8006
            }
-# Auth backend: pve or pam
+# Auth backend / realm — must match the realm name in Proxmox Datacenter > Realms:
+#   pve   = Proxmox VE built-in user database
+#   pam   = Linux PAM (local system users on the Proxmox node)
+#   ldap  = LDAP directory (e.g. OpenLDAP)
+#   ad    = Microsoft Active Directory
+# Custom realm names (as configured in Proxmox) can also be used.
 auth_backend = pve
 # Enable TOTP entry field
 auth_totp = false

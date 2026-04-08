@@ -352,7 +352,8 @@ class HostTab(QWidget):
         auth_form.setSpacing(8)
 
         self._backend = QComboBox()
-        self._backend.addItems(["pve", "pam"])
+        self._backend.addItems(["pve", "pam", "ldap", "ad"])
+        self._backend.setEditable(True)
         self._backend.setCurrentText(g.get("auth_backend", "pve"))
         auth_form.addRow("Auth Backend:", self._backend)
 

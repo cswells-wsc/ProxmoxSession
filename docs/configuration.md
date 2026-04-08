@@ -51,7 +51,7 @@ Each cluster is a separate `[Hosts.<name>]` section. The `<name>` is shown to us
 | Key | Type | Required | Description |
 |---|---|---|---|
 | `hostpool` | JSON dict | Yes | Map of `"host": port` pairs. All lines must be indented. |
-| `auth_backend` | string | No | Auth realm: `pve` (Proxmox VE) or `pam` (Linux PAM). Default: `pve` |
+| `auth_backend` | string | No | Auth realm — see table below. Default: `pve` |
 | `auth_totp` | bool | No | Show OTP field on login. Default: `False` |
 | `tls_verify` | bool | No | Verify TLS certificate. Default: `True` — set `False` for self-signed certs. |
 | `user` | string | No | Pre-fill username. If combined with `token_name` + `token_value`, auto-login is triggered. |
@@ -60,6 +60,20 @@ Each cluster is a separate `[Hosts.<name>]` section. The `<name>` is shown to us
 | `pwresetcmd` | string | No | Shell command to open a password reset tool or URL |
 | `auto_vmid` | int | No | VMID to connect to automatically after login, skipping the VM list |
 | `knock_seq` | JSON array | No | Port-knock sequence before connecting (see below) |
+
+### Auth Backend / Realm
+
+The `auth_backend` value must match a realm configured in **Proxmox Datacenter → Realms**.
+
+| Value | Type | When to use |
+|---|---|---|
+| `pve` | Proxmox VE | Default. Users created in the Proxmox web UI. |
+| `pam` | Linux PAM | Local system accounts on the Proxmox node (`/etc/passwd`). |
+| `ldap` | LDAP | External LDAP directory (e.g. OpenLDAP). Realm must be configured in Proxmox first. |
+| `ad` | Active Directory | Microsoft AD domain. Realm must be configured in Proxmox first. |
+| _(custom)_ | Any | Use the exact realm name as shown in Proxmox Datacenter → Realms. |
+
+For LDAP and AD, username format is just the bare username (e.g. `jsmith`) — the `@realm` suffix is appended automatically.
 
 ### hostpool Format
 
