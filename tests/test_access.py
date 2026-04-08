@@ -69,6 +69,10 @@ class TestRoleDefinitions(unittest.TestCase):
         """Pool.Audit is required to read pool members in VM Assignments tab."""
         self.assertIn("Pool.Audit", ROLES["ProxmoxSession.SuperAdmin"])
 
+    def test_superadmin_has_pool_allocate(self):
+        """Pool.Allocate is required to add/remove VMs from the resource pool."""
+        self.assertIn("Pool.Allocate", ROLES["ProxmoxSession.SuperAdmin"])
+
     def test_superadmin_has_sys_audit(self):
         """Sys.Audit is required to read cluster/node resource status."""
         self.assertIn("Sys.Audit", ROLES["ProxmoxSession.SuperAdmin"])
