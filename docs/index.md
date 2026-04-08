@@ -11,6 +11,7 @@ Proxmox VDI Session is a modern, PyQt6-based VDI client that connects to Proxmox
 | [Installation Guide](installation.md) | Full installation instructions for Debian/Ubuntu and Fedora/RHEL |
 | [Configuration Reference](configuration.md) | All config file options explained with examples |
 | [Managing the Application](management.md) | User management, Proxmox permissions, updates, and uninstalling |
+| [USB Redirection](usb-redirection.md) | Proxmox VM setup, guest drivers, and per-session USB toggle |
 | [Troubleshooting](troubleshooting.md) | Common problems and how to fix them |
 
 ---
@@ -20,7 +21,7 @@ Proxmox VDI Session is a modern, PyQt6-based VDI client that connects to Proxmox
 ```bash
 # 1. Clone / copy the project
 cd /opt
-git clone <your-repo-url> ProxmoxSession
+git clone https://github.com/cswells-wsc/ProxmoxSession.git ProxmoxSession
 cd ProxmoxSession
 
 # 2. Install
