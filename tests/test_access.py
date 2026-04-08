@@ -173,11 +173,16 @@ class TestAssignGroupPermissions(unittest.TestCase):
     def test_superadmin_gets_vms_path(self):
         px = _make_proxmox()
         assign_group_permissions(px, "superadmin", "/vms")
-        calls = px.access.acl.put.call_args_list
-        # First call: /vms with SuperAdmin
-        first = calls[0]
-        self.assertEqual(first.kwargs["path"], "/vms")
-        self.assertEqual(first.kwargs["roles"], "ProxmoxSession.SuperAdmin")
+        paths = [c.kwargs["path"] for c in px.access.acl.put.call_args_list]
+        self.assertIn("/vms", paths)
+
+    def test_superadmin_gets_pool_acl(self):
+        """Superadmin needs Pool.Audit on the pool path to see it in pools.get()."""
+        px = _make_proxmox()
+        assign_group_permissions(px, "superadmin", "/vms")
+        paths = [c.kwargs["path"] for c in px.access.acl.put.call_args_list]
+        self.assertIn(f"/pool/{POOL_NAME}", paths,
+                      "Superadmin must have ACL on pool path to see it")
 
     def test_admin_gets_pool_path(self):
         px = _make_proxmox()

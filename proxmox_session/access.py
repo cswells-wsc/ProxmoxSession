@@ -182,7 +182,7 @@ def assign_group_permissions(
         )
         log.info("ACL: %s → ProxmoxSession.SuperAdmin on /vms", groupid)
         # SuperAdmin needs the role on /access with propagate=1 so it covers
-        # /access/users (User.Audit/Modify), /access/groups (Group.Allocate/Audit),
+        # /access/users (User.Modify), /access/groups (Group.Allocate),
         # and /access/roles — without propagation these sub-paths are not covered.
         proxmox.access.acl.put(
             path="/access",
@@ -191,6 +191,14 @@ def assign_group_permissions(
             propagate=1,
         )
         log.info("ACL: %s → ProxmoxSession.SuperAdmin on /access (propagate)", groupid)
+        # SuperAdmin needs Pool.Audit on the pool path to see it in pools.get()
+        proxmox.access.acl.put(
+            path=f"/pool/{POOL_NAME}",
+            groups=groupid,
+            roles="ProxmoxSession.SuperAdmin",
+            propagate=1,
+        )
+        log.info("ACL: %s → ProxmoxSession.SuperAdmin on /pool/%s", groupid, POOL_NAME)
     elif short_name == "admin":
         # Admin manages VMs in the resource pool
         pool_path = f"/pool/{POOL_NAME}"
