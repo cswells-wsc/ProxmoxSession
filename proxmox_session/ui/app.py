@@ -5,8 +5,23 @@ QApplication setup and QSS theme loading.
 import os
 import sys
 
+from PyQt6.QtCore import QEvent, QObject
 from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QComboBox
+
+
+class _NoScrollComboFilter(QObject):
+    """
+    Application-level event filter that prevents the scroll wheel from
+    changing QComboBox values unless the widget has keyboard focus.
+    This stops accidental value changes when scrolling past a dropdown.
+    """
+
+    def eventFilter(self, obj: QObject | None, event: QEvent | None) -> bool:
+        if isinstance(obj, QComboBox) and event is not None:
+            if event.type() == QEvent.Type.Wheel and not obj.hasFocus():
+                return True  # swallow the event
+        return False
 
 # Dark and light QSS stylesheets
 _DARK_QSS = """
@@ -130,6 +145,10 @@ def create_app(theme: str = "system", icon_path: str | None = None) -> QApplicat
     """
     existing = QApplication.instance()
     app: QApplication = existing if isinstance(existing, QApplication) else QApplication(sys.argv)
+
+    # Prevent scroll wheel from changing combo box values unless focused
+    _filter = _NoScrollComboFilter(app)
+    app.installEventFilter(_filter)
 
     resolved = theme.lower()
     if resolved == "system":
