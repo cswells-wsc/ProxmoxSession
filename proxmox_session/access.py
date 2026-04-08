@@ -394,6 +394,84 @@ def wizard_already_run(proxmox: proxmoxer.ProxmoxAPI) -> bool:
     return group_name("superadmin") in existing
 
 
+def repair_permissions(proxmox: proxmoxer.ProxmoxAPI) -> dict:
+    """
+    Update all ProxmoxSession roles and re-apply ACLs for every existing
+    proxmoxsession_* group without touching users or creating new objects.
+
+    Safe to run at any time — idempotent.
+    Returns a results dict with fixed/skipped/failed lists.
+    """
+    results: dict = {"fixed": [], "skipped": [], "failed": []}
+
+    def record(action: str, item: str, detail: str = "") -> None:
+        results[action].append({"item": item, "detail": detail})
+        log.info("%s: %s %s", action.upper(), item, detail)
+
+    # 1. Update all role privilege definitions
+    try:
+        existing_roles = {r["roleid"] for r in proxmox.access.roles.get()}
+        for roleid, privs in ROLES.items():
+            privs_str = " ".join(privs.split())
+            if roleid in existing_roles:
+                proxmox.access.roles(roleid).put(privs=privs_str)
+                record("fixed", f"Role updated: {roleid}")
+            else:
+                proxmox.access.roles.post(roleid=roleid, privs=privs_str)
+                record("fixed", f"Role created: {roleid}")
+    except Exception as e:
+        record("failed", "Roles", str(e))
+        return results  # can't continue without roles
+
+    # 2. Ensure resource pool exists
+    try:
+        existing_pools = {p["poolid"] for p in proxmox.pools.get()}
+        if POOL_NAME not in existing_pools:
+            proxmox.pools.post(
+                poolid=POOL_NAME,
+                comment="ProxmoxSession managed VMs and templates",
+            )
+            record("fixed", f"Pool created: {POOL_NAME}")
+        else:
+            record("skipped", f"Pool exists: {POOL_NAME}")
+    except Exception as e:
+        record("failed", f"Pool: {POOL_NAME}", str(e))
+
+    # 3. Re-apply ACLs for all existing proxmoxsession_* groups
+    try:
+        existing_groups = list_proxmoxsession_groups(proxmox)
+    except Exception as e:
+        record("failed", "Group listing", str(e))
+        return results
+
+    for g in existing_groups:
+        gid = g["groupid"]
+        short = gid[len(PREFIX):]
+        try:
+            if short in STANDARD_GROUPS:
+                assign_group_permissions(proxmox, short)
+                record("fixed", f"ACLs re-applied: {gid}")
+            else:
+                # Custom groups: re-apply their existing ACLs by looking up
+                # what path they already have an ACL on
+                acls = [
+                    entry for entry in proxmox.access.acl.get()
+                    if entry.get("ugid") == gid and entry.get("type") == "group"
+                ]
+                if acls:
+                    path = acls[0].get("path", "/vms")
+                    existing_role = acls[0].get("roleid", "ProxmoxSession.VDIUser")
+                    role_short = existing_role.replace("ProxmoxSession.", "")
+                    assign_custom_group_permissions(proxmox, short, role_short, path)
+                    record("fixed", f"ACLs re-applied: {gid} on {path}")
+                else:
+                    record("skipped", f"Custom group {gid} — no existing ACL found, skipping")
+        except Exception as e:
+            record("failed", f"ACL for {gid}", str(e))
+
+    return results
+
+
 # ── Full wizard setup ─────────────────────────────────────────────────────────
 
 def run_full_setup(

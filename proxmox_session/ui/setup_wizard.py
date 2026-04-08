@@ -12,6 +12,8 @@ import proxmoxer
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFormLayout,
     QHBoxLayout,
     QHeaderView,
@@ -23,6 +25,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QTableWidget,
     QTableWidgetItem,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
     QWizard,
@@ -33,6 +36,7 @@ from ..access import (
     POOL_NAME,
     PREFIX,
     STANDARD_GROUPS,
+    repair_permissions,
     run_full_setup,
     wizard_already_run,
 )
@@ -55,6 +59,60 @@ F_SA_FIRST = "sa_firstname"
 F_SA_LAST = "sa_lastname"
 F_EXTRA_USERS = "extra_users"  # list[dict]
 F_RESULTS = "results"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Repair results dialog
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _RepairResultsDialog(QDialog):
+    """Shows the outcome of a Check & Repair Permissions run."""
+
+    def __init__(self, results: dict, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setWindowTitle("Check & Repair — Results")
+        self.setMinimumSize(520, 380)
+
+        layout = QVBoxLayout(self)
+
+        fixed   = results.get("fixed",   [])
+        skipped = results.get("skipped", [])
+        failed  = results.get("failed",  [])
+
+        summary = QLabel(
+            f"<b>Repair complete.</b>  "
+            f"Fixed: {len(fixed)}  &nbsp; Skipped: {len(skipped)}  &nbsp; "
+            f"<span style='color:{'red' if failed else 'green'};'>Failed: {len(failed)}</span>"
+        )
+        layout.addWidget(summary)
+
+        log_box = QTextEdit()
+        log_box.setReadOnly(True)
+        log_box.setFont(log_box.font())
+
+        lines = []
+        for item in fixed:
+            lines.append(f"✔  {item['item']}")
+        for item in skipped:
+            lines.append(f"–  {item['item']}  ({item.get('detail', '')})")
+        for item in failed:
+            lines.append(f"✘  {item['item']}  {item.get('detail', '')}")
+
+        log_box.setPlainText("\n".join(lines) if lines else "No changes.")
+        layout.addWidget(log_box, 1)
+
+        if failed:
+            note = QLabel(
+                "Some items failed. Check your Proxmox connection and root permissions, "
+                "then try again."
+            )
+            note.setStyleSheet("color: red;")
+            note.setWordWrap(True)
+            layout.addWidget(note)
+
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        btns.accepted.connect(self.accept)
+        layout.addWidget(btns)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -146,11 +204,17 @@ class RootLoginPage(QWizardPage):
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
-        already_run_note = QLabel("")
-        already_run_note.setObjectName("already_run_note")
-        already_run_note.setWordWrap(True)
-        layout.addWidget(already_run_note)
-        self._already_run_note = already_run_note
+        # Shown only when wizard was already run
+        self._already_run_note = QLabel("")
+        self._already_run_note.setWordWrap(True)
+        self._already_run_note.setVisible(False)
+        layout.addWidget(self._already_run_note)
+
+        self._repair_btn = QPushButton("Check & Repair Permissions")
+        self._repair_btn.setVisible(False)
+        self._repair_btn.clicked.connect(self._on_repair)
+        layout.addWidget(self._repair_btn)
+
         layout.addStretch()
 
         # Register fields so wizard can read them
@@ -161,6 +225,8 @@ class RootLoginPage(QWizardPage):
         self._connect_btn.setEnabled(False)
         self._status.setText("Connecting…")
         self._proxmox = None
+        self._already_run_note.setVisible(False)
+        self._repair_btn.setVisible(False)
         self.completeChanged.emit()
 
         host = self._host.text().strip()
@@ -181,15 +247,16 @@ class RootLoginPage(QWizardPage):
             px.version.get()
             self._proxmox = px
 
-            # Warn if wizard already ran
             if wizard_already_run(px):
                 self._already_run_note.setText(
-                    "Note: ProxmoxSession groups already exist on this server. "
-                    "Re-running the wizard is safe — existing objects will be skipped."
+                    "ProxmoxSession groups already exist on this server.\n"
+                    "Click 'Check & Repair Permissions' to update roles and re-apply ACLs "
+                    "without changing any users or groups.\n\n"
+                    "Or click Next to run the full wizard again (safe — existing objects are skipped)."
                 )
                 self._already_run_note.setStyleSheet("color: orange;")
-            else:
-                self._already_run_note.setText("")
+                self._already_run_note.setVisible(True)
+                self._repair_btn.setVisible(True)
 
             self._status.setText("Connected")
             self._status.setStyleSheet("color: green;")
@@ -199,6 +266,24 @@ class RootLoginPage(QWizardPage):
 
         self._connect_btn.setEnabled(True)
         self.completeChanged.emit()
+
+    def _on_repair(self) -> None:
+        if self._proxmox is None:
+            return
+        self._repair_btn.setEnabled(False)
+        self._repair_btn.setText("Repairing…")
+        self.repaint()
+
+        try:
+            results = repair_permissions(self._proxmox)
+        except Exception as e:
+            results = {"fixed": [], "skipped": [], "failed": [{"item": "Unexpected error", "detail": str(e)}]}
+        finally:
+            self._repair_btn.setEnabled(True)
+            self._repair_btn.setText("Check & Repair Permissions")
+
+        dlg = _RepairResultsDialog(results, self)
+        dlg.exec()
 
     def isComplete(self) -> bool:
         return self._proxmox is not None
