@@ -24,13 +24,13 @@ ROLES: dict[str, str] = {
     "ProxmoxSession.VDIUser":   "VM.Console VM.PowerMgmt VM.Audit VM.Clone",
     # Pool-level admin role: full VM management within the resource pool
     "ProxmoxSession.Admin":     "VM.Console VM.PowerMgmt VM.Audit VM.Allocate VM.Config.Options VM.Clone Pool.Audit",
-    # Superadmin: manage groups/users + view all VMs + list users/groups/pool
-    # User.Audit  — list all users (without it Proxmox returns only the current user)
-    # Group.Audit — read group membership/details
-    # Pool.Audit  — read pool members (VM Assignments tab)
+    # Superadmin: manage groups/users + view all VMs/pools + cluster audit
+    # Sys.Audit  — read cluster/node status and resources (needed for get_vms node filter)
+    # Pool.Audit — read pool members (VM Assignments tab)
+    # User.Modify + propagate=1 on /access covers listing users and groups
     "ProxmoxSession.SuperAdmin": (
-        "User.Modify User.Audit Group.Allocate Group.Audit "
-        "Permissions.Modify VM.Audit Pool.Audit"
+        "User.Modify Group.Allocate Permissions.Modify "
+        "VM.Audit Pool.Audit Sys.Audit"
     ),
     # Pool deploy role for VDI users: lets them clone templates into the pool
     "ProxmoxSession.VDIDeploy": "VM.Allocate Datastore.AllocateSpace",

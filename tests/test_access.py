@@ -55,17 +55,23 @@ def _make_proxmox():
 # ── is_protected ──────────────────────────────────────────────────────────────
 
 class TestRoleDefinitions(unittest.TestCase):
-    def test_superadmin_has_user_audit(self):
-        """User.Audit is required to list all users (without it Proxmox returns only current user)."""
-        self.assertIn("User.Audit", ROLES["ProxmoxSession.SuperAdmin"])
+    def test_superadmin_has_user_modify(self):
+        """User.Modify with propagate=1 on /access covers listing and managing users."""
+        self.assertIn("User.Modify", ROLES["ProxmoxSession.SuperAdmin"])
 
-    def test_superadmin_has_group_audit(self):
-        """Group.Audit is required to read group member lists."""
-        self.assertIn("Group.Audit", ROLES["ProxmoxSession.SuperAdmin"])
+    def test_superadmin_has_no_invalid_privs(self):
+        """User.Audit and Group.Audit are not real Proxmox privileges — must not be present."""
+        privs = ROLES["ProxmoxSession.SuperAdmin"]
+        self.assertNotIn("User.Audit", privs)
+        self.assertNotIn("Group.Audit", privs)
 
     def test_superadmin_has_pool_audit(self):
         """Pool.Audit is required to read pool members in VM Assignments tab."""
         self.assertIn("Pool.Audit", ROLES["ProxmoxSession.SuperAdmin"])
+
+    def test_superadmin_has_sys_audit(self):
+        """Sys.Audit is required to read cluster/node resource status."""
+        self.assertIn("Sys.Audit", ROLES["ProxmoxSession.SuperAdmin"])
 
     def test_superadmin_has_vm_audit(self):
         self.assertIn("VM.Audit", ROLES["ProxmoxSession.SuperAdmin"])
